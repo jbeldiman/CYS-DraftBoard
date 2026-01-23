@@ -42,12 +42,3 @@ export async function proxy(req: NextRequest) {
 }
 
 export default proxy;
-
-export const config = {
-  matcher: [
-    "/draft/:path*",
-    "/siblings/:path*",
-    "/history/:path*",
-    "/admin/:path*",
-  ],
-};
