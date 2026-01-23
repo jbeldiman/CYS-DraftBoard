@@ -85,25 +85,6 @@ function norm(s: any): string {
   return (s ?? "").toString().trim();
 }
 
-function parseDob(s: string): Date | null {
-  const raw = norm(s);
-  if (!raw) return null;
-
-  const mdy = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (mdy) {
-    const mm = Number(mdy[1]);
-    const dd = Number(mdy[2]);
-    const yy = Number(mdy[3]);
-    const d = new Date(Date.UTC(yy, mm - 1, dd, 0, 0, 0));
-    if (Number.isNaN(d.getTime())) return null;
-    return d;
-  }
-
-  const d = new Date(raw);
-  if (Number.isNaN(d.getTime())) return null;
-  return d;
-}
-
 function wantsU13FromRow(row: Record<string, string>): boolean {
   const leagueInfo = norm(row["League Information - What league are you wanting your child to participate in?"]).toLowerCase();
   const ageGroup = norm(row["Age Group"]).toLowerCase();
@@ -175,6 +156,33 @@ function primaryEmailFromRow(row: Record<string, string>): string | null {
   return null;
 }
 
+function parseDateOnlyToUTCNoon(raw: unknown): Date | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+
+  const mdy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/);
+  if (mdy) {
+    const mm = Number(mdy[1]);
+    const dd = Number(mdy[2]);
+    let yy = Number(mdy[3]);
+    if (yy < 100) yy += 2000;
+    if (!Number.isFinite(mm) || !Number.isFinite(dd) || !Number.isFinite(yy)) return null;
+    return new Date(Date.UTC(yy, mm - 1, dd, 12, 0, 0));
+  }
+
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const yy = Number(iso[1]);
+    const mm = Number(iso[2]);
+    const dd = Number(iso[3]);
+    return new Date(Date.UTC(yy, mm - 1, dd, 12, 0, 0));
+  }
+
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0));
+}
+
 async function latestEventId() {
   const e = await prisma.draftEvent.findFirst({ orderBy: { createdAt: "desc" }, select: { id: true } });
   if (e?.id) return e.id;
@@ -233,16 +241,17 @@ export async function POST(req: Request) {
         norm(o["Registration ID"]) || norm(o["Registration Id"]) || norm(o["RegistrationID"]) || norm(o["Registration"]) || null;
 
       const firstName = norm(o["First Name"]) || norm(o["Player First Name"]) || norm(o["Participant First Name"]);
-
       const lastName = norm(o["Last Name"]) || norm(o["Player Last Name"]) || norm(o["Participant Last Name"]);
-
       if (!firstName || !lastName) continue;
 
       const fullName = `${firstName} ${lastName}`.trim();
 
-      const dob = parseDob(o["DOB"] ?? o["Date of Birth"] ?? o["Birthdate"] ?? "");
+      const dobRaw = o["DOB"] ?? o["Date of Birth"] ?? o["Birthdate"] ?? "";
+      const dob = parseDateOnlyToUTCNoon(dobRaw);
+
       const birthYearRaw = norm(o["Birth Year"]);
       const birthYear = birthYearRaw ? Number(birthYearRaw) : dob ? dob.getUTCFullYear() : null;
+
       const gender = norm(o["Gender"]) || null;
 
       const leagueChoice =

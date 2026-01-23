@@ -165,6 +165,10 @@ model DraftPlayer {
   primaryPhone   String?
   primaryEmail   String?
 
+  experience       String?
+  fall2025Rating   Int?
+  spring2025Rating Int?
+
   notes          String?
   rank           Int?
 
