@@ -9,6 +9,7 @@ datasource db {
 
 enum Role {
   ADMIN
+  BOARD
   COACH
   PARENT
 }
@@ -17,6 +18,17 @@ enum DraftPhase {
   SETUP
   LIVE
   COMPLETE
+}
+
+enum AccessRequestType {
+  COACH
+  BOARD
+}
+
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  DENIED
 }
 
 model User {
@@ -31,6 +43,27 @@ model User {
   accounts      Account[]
   sessions      Session[]
   coachedTeams  DraftTeam[] @relation("CoachTeams")
+
+  accessRequests        AccessRequest[]
+  decidedAccessRequests AccessRequest[] @relation("AccessRequestDecidedBy")
+}
+
+model AccessRequest {
+  id            String              @id @default(cuid())
+  userId        String
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type          AccessRequestType
+  status        AccessRequestStatus @default(PENDING)
+
+  requestedAt   DateTime            @default(now())
+  decidedAt     DateTime?
+  decidedById   String?
+  decidedBy     User?               @relation("AccessRequestDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+  decisionNotes String?
+
+  @@unique([userId, type, status])
+  @@index([status, type, requestedAt])
 }
 
 model Account {
