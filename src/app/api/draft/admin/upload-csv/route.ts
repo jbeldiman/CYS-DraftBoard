@@ -183,9 +183,13 @@ function parseDateOnlyToUTCNoon(raw: unknown): Date | null {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0));
 }
 
-async function latestEventId() {
-  const e = await prisma.draftEvent.findFirst({ orderBy: { createdAt: "desc" }, select: { id: true } });
-  if (e?.id) return e.id;
+async function latestEvent() {
+  const e = await prisma.draftEvent.findFirst({
+    orderBy: { createdAt: "desc" },
+    select: { id: true, phase: true },
+  });
+
+  if (e) return e;
 
   const created = await prisma.draftEvent.create({
     data: {
@@ -196,16 +200,25 @@ async function latestEventId() {
       pickClockSeconds: 120,
       isPaused: true,
     },
-    select: { id: true },
+    select: { id: true, phase: true },
   });
 
-  return created.id;
+  return created;
 }
 
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
     if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+    const event = await latestEvent();
+
+    if (event.phase !== "SETUP") {
+      return NextResponse.json(
+        { error: "Draft is LIVE. CSV upload is locked. Stop the draft to unlock uploads." },
+        { status: 409 }
+      );
+    }
 
     const form = await req.formData();
     const file = form.get("file");
@@ -228,11 +241,15 @@ export async function POST(req: Request) {
       objects.push(obj);
     }
 
-    const draftEventId = await latestEventId();
+    const draftEventId = event.id;
 
-    const toUpsert: any[] = [];
+    const toCreate: any[] = [];
+    const regIds: string[] = [];
+
     let total = 0;
     let eligible = 0;
+
+    const seen = new Set<string>();
 
     for (const o of objects) {
       total += 1;
@@ -287,7 +304,18 @@ export async function POST(req: Request) {
 
       const notes = norm(o["Experience: Tell us about your player..."]) || norm(o["Experience"]) || null;
 
-      toUpsert.push({
+      const dedupeKey =
+        registrationId
+          ? `rid:${registrationId}`
+          : `nm:${firstName}|${lastName}|${dob ? dob.toISOString().slice(0, 10) : ""}`;
+
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      if (registrationId) regIds.push(registrationId);
+
+      toCreate.push({
+        draftEventId,
         registrationId,
         firstName,
         lastName,
@@ -304,92 +332,42 @@ export async function POST(req: Request) {
         primaryEmail,
         notes,
         isDraftEligible,
+        isDrafted: false,
+        draftedTeamId: null,
+        draftedAt: null,
+        rank: null,
       });
     }
 
-    const ops: any[] = [];
-    for (const p of toUpsert) {
-      if (p.registrationId) {
-        ops.push(
-          prisma.draftPlayer.upsert({
-            where: { registrationId: p.registrationId },
-            create: {
-              draftEventId,
-              registrationId: p.registrationId,
-              firstName: p.firstName,
-              lastName: p.lastName,
-              fullName: p.fullName,
-              gender: p.gender,
-              dob: p.dob,
-              birthYear: p.birthYear,
-              leagueChoice: p.leagueChoice,
-              wantsU13: p.wantsU13,
-              jerseySize: p.jerseySize,
-              guardian1Name: p.guardian1Name,
-              guardian2Name: p.guardian2Name,
-              primaryPhone: p.primaryPhone,
-              primaryEmail: p.primaryEmail,
-              notes: p.notes,
-              isDraftEligible: p.isDraftEligible,
-              isDrafted: false,
-            },
-            update: {
-              draftEventId,
-              firstName: p.firstName,
-              lastName: p.lastName,
-              fullName: p.fullName,
-              gender: p.gender,
-              dob: p.dob,
-              birthYear: p.birthYear,
-              leagueChoice: p.leagueChoice,
-              wantsU13: p.wantsU13,
-              jerseySize: p.jerseySize,
-              guardian1Name: p.guardian1Name,
-              guardian2Name: p.guardian2Name,
-              primaryPhone: p.primaryPhone,
-              primaryEmail: p.primaryEmail,
-              notes: p.notes,
-              isDraftEligible: p.isDraftEligible,
-            },
-          })
-        );
-      } else {
-        ops.push(
-          prisma.draftPlayer.create({
-            data: {
-              draftEventId,
-              registrationId: null,
-              firstName: p.firstName,
-              lastName: p.lastName,
-              fullName: p.fullName,
-              gender: p.gender,
-              dob: p.dob,
-              birthYear: p.birthYear,
-              leagueChoice: p.leagueChoice,
-              wantsU13: p.wantsU13,
-              jerseySize: p.jerseySize,
-              guardian1Name: p.guardian1Name,
-              guardian2Name: p.guardian2Name,
-              primaryPhone: p.primaryPhone,
-              primaryEmail: p.primaryEmail,
-              notes: p.notes,
-              isDraftEligible: p.isDraftEligible,
-              isDrafted: false,
-            },
-          })
-        );
-      }
-    }
-
-    if (ops.length === 0) {
+    if (toCreate.length === 0) {
       return NextResponse.json({ error: "No valid player rows found to import" }, { status: 400 });
     }
 
-    await prisma.$transaction(ops);
+    await prisma.$transaction(async (tx) => {
+      await tx.draftPick.deleteMany({ where: { draftEventId } });
+      await tx.draftPlayer.deleteMany({ where: { draftEventId } });
+
+      if (regIds.length) {
+        await tx.draftPlayer.deleteMany({ where: { registrationId: { in: regIds } } });
+      }
+
+      await tx.draftEvent.update({
+        where: { id: draftEventId },
+        data: {
+          phase: "SETUP",
+          currentPick: 1,
+          isPaused: true,
+          clockEndsAt: null,
+          pauseRemainingSecs: null,
+        },
+      });
+
+      await tx.draftPlayer.createMany({ data: toCreate });
+    });
 
     return NextResponse.json({
       ok: true,
-      processed: toUpsert.length,
+      processed: toCreate.length,
       totalRows: total,
       eligibleRows: eligible,
     });

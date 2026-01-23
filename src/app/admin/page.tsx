@@ -179,48 +179,55 @@ export default function AdminPage() {
   const phase = draftStatus?.phase ?? "(unknown)";
   const isLive = phase === "LIVE";
   const isPaused = !!draftStatus?.isPaused;
+  const uploadLocked = isLive;
 
   return (
     <main style={{ padding: 24, maxWidth: 980 }}>
       <h1 style={{ fontSize: 28, fontWeight: 800 }}>Admin</h1>
       <p style={{ opacity: 0.8 }}>Upload registrations + run the draft.</p>
 
-      {err ? (
-        <div style={{ marginTop: 12, color: "crimson" }}>{err}</div>
-      ) : null}
-      {msg ? (
-        <div style={{ marginTop: 12, color: "green" }}>{msg}</div>
-      ) : null}
+      {err ? <div style={{ marginTop: 12, color: "crimson" }}>{err}</div> : null}
+      {msg ? <div style={{ marginTop: 12, color: "green" }}>{msg}</div> : null}
 
       <hr style={{ margin: "16px 0" }} />
 
       <h2 style={{ fontSize: 18, fontWeight: 700 }}>Upload CSV Here</h2>
+      {uploadLocked ? (
+        <div style={{ marginTop: 8, color: "#b00020", fontWeight: 800 }}>
+          Upload is locked while the draft is LIVE. Stop the draft to unlock uploads.
+        </div>
+      ) : null}
+
       <div style={{ maxWidth: 820 }}>
         <div
           onDragOver={(e) => {
+            if (uploadLocked) return;
             e.preventDefault();
             setDragOver(true);
           }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => {
+            if (uploadLocked) return;
             e.preventDefault();
             setDragOver(false);
             const f = e.dataTransfer.files?.[0];
             if (f) uploadCsv(f);
           }}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            if (uploadLocked) return;
+            fileInputRef.current?.click();
+          }}
           style={{
             marginTop: 10,
             border: `2px dashed ${dragOver ? "#111" : "#bbb"}`,
             borderRadius: 14,
             padding: 18,
-            cursor: "pointer",
+            cursor: uploadLocked ? "not-allowed" : "pointer",
             background: dragOver ? "rgba(0,0,0,0.04)" : "transparent",
+            opacity: uploadLocked ? 0.7 : 1,
           }}
         >
-          <div style={{ fontWeight: 800, marginBottom: 6 }}>
-            Drag & drop registrations CSV here
-          </div>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>Drag & drop registrations CSV here</div>
           <div style={{ opacity: 0.8, fontSize: 13 }}>
             Or click to select a file. This will import players, eligibility, jersey size, and parent contact info.
           </div>
@@ -236,18 +243,18 @@ export default function AdminPage() {
           >
             <button
               type="button"
-              disabled={uploading}
+              disabled={uploading || uploadLocked}
               style={{
                 padding: "8px 10px",
                 borderRadius: 8,
                 border: "1px solid #222",
-                background: uploading ? "#888" : "#111",
+                background: uploading || uploadLocked ? "#888" : "#111",
                 color: "white",
                 fontWeight: 800,
-                cursor: uploading ? "not-allowed" : "pointer",
+                cursor: uploading || uploadLocked ? "not-allowed" : "pointer",
               }}
             >
-              {uploading ? "Uploading…" : "Choose File"}
+              {uploadLocked ? "Upload Locked (LIVE)" : uploading ? "Uploading…" : "Choose File"}
             </button>
 
             {uploadMsg ? <div style={{ color: "green" }}>{uploadMsg}</div> : null}
@@ -258,8 +265,10 @@ export default function AdminPage() {
             ref={fileInputRef}
             type="file"
             accept=".csv,text/csv"
+            disabled={uploading || uploadLocked}
             style={{ display: "none" }}
             onChange={(e) => {
+              if (uploadLocked) return;
               const f = e.target.files?.[0];
               if (f) uploadCsv(f);
               e.currentTarget.value = "";
@@ -355,16 +364,11 @@ export default function AdminPage() {
               <span style={{ fontWeight: 700 }}>Phase:</span> {phase}
             </div>
             <div>
-              <span style={{ fontWeight: 700 }}>Current Pick:</span>{" "}
-              {draftStatus?.currentPick ?? "(unknown)"}
+              <span style={{ fontWeight: 700 }}>Current Pick:</span> {draftStatus?.currentPick ?? "(unknown)"}
             </div>
             <div>
               <span style={{ fontWeight: 700 }}>Paused:</span>{" "}
-              {draftStatus?.isPaused === undefined
-                ? "(unknown)"
-                : draftStatus.isPaused
-                ? "Yes"
-                : "No"}
+              {draftStatus?.isPaused === undefined ? "(unknown)" : draftStatus.isPaused ? "Yes" : "No"}
             </div>
           </div>
         </div>
@@ -373,10 +377,7 @@ export default function AdminPage() {
       <hr style={{ margin: "24px 0" }} />
 
       <h2 style={{ fontSize: 18, fontWeight: 700 }}>Create Coach</h2>
-      <form
-        onSubmit={createCoach}
-        style={{ display: "grid", gap: 10, maxWidth: 420 }}
-      >
+      <form onSubmit={createCoach} style={{ display: "grid", gap: 10, maxWidth: 420 }}>
         <input
           placeholder="Coach name (optional)"
           value={name}
@@ -432,17 +433,12 @@ export default function AdminPage() {
               <div style={{ opacity: 0.8 }}>{c.email}</div>
             </div>
 
-            <a
-              href={`/draft?view=${encodeURIComponent(c.id)}`}
-              style={{ textDecoration: "underline", fontWeight: 700 }}
-            >
+            <a href={`/draft?view=${encodeURIComponent(c.id)}`} style={{ textDecoration: "underline", fontWeight: 700 }}>
               View Board
             </a>
           </div>
         ))}
-        {coaches.length === 0 ? (
-          <div style={{ opacity: 0.7 }}>No coaches yet.</div>
-        ) : null}
+        {coaches.length === 0 ? <div style={{ opacity: 0.7 }}>No coaches yet.</div> : null}
       </div>
     </main>
   );
