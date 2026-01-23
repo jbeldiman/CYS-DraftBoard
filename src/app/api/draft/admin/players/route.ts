@@ -15,6 +15,14 @@ async function latestEventId() {
   return e.id;
 }
 
+function splitName(fullName: string) {
+  const raw = String(fullName ?? "").trim();
+  const parts = raw.split(/\s+/).filter(Boolean);
+  const firstName = parts[0] ?? "";
+  const lastName = parts.length > 1 ? parts.slice(1).join(" ") : "";
+  return { firstName, lastName };
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const drafted = url.searchParams.get("drafted");
@@ -53,23 +61,38 @@ export async function POST(req: Request) {
 
   const players = Array.isArray(body?.players) ? body.players : [];
   const clean = players
-    .map((p: any) => ({
-      id: (p?.id ?? "").toString().trim() || null,
-      fullName: (p?.fullName ?? "").toString().trim(),
-      rank: p?.rank === null || p?.rank === undefined || p?.rank === "" ? null : Number(p.rank),
-      notes: (p?.notes ?? "").toString().trim() || null,
-    }))
+    .map((p: any) => {
+      const fullName = (p?.fullName ?? "").toString().trim();
+      const { firstName, lastName } = splitName(fullName);
+      return {
+        id: (p?.id ?? "").toString().trim() || null,
+        fullName,
+        firstName,
+        lastName,
+        rank: p?.rank === null || p?.rank === undefined || p?.rank === "" ? null : Number(p.rank),
+        notes: (p?.notes ?? "").toString().trim() || null,
+      };
+    })
     .filter((p: any) => p.fullName);
 
   const ops = clean.map((p: any) => {
+    const baseData = {
+      fullName: p.fullName,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      rank: Number.isFinite(p.rank) ? p.rank : null,
+      notes: p.notes,
+    };
+
     if (p.id) {
       return prisma.draftPlayer.update({
         where: { id: p.id },
-        data: { fullName: p.fullName, rank: Number.isFinite(p.rank) ? p.rank : null, notes: p.notes },
+        data: baseData,
       });
     }
+
     return prisma.draftPlayer.create({
-      data: { draftEventId, fullName: p.fullName, rank: Number.isFinite(p.rank) ? p.rank : null, notes: p.notes },
+      data: { draftEventId, ...baseData },
     });
   });
 
