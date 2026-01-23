@@ -251,11 +251,18 @@ export async function POST(req: Request) {
 
     const seen = new Set<string>();
 
-    for (const o of objects) {
+    for (let idx = 0; idx < objects.length; idx++) {
+      const o = objects[idx];
+      const rawRow = rows[idx] ?? [];
+
       total += 1;
 
       const registrationId =
-        norm(o["Registration ID"]) || norm(o["Registration Id"]) || norm(o["RegistrationID"]) || norm(o["Registration"]) || null;
+        norm(o["Registration ID"]) ||
+        norm(o["Registration Id"]) ||
+        norm(o["RegistrationID"]) ||
+        norm(o["Registration"]) ||
+        null;
 
       const firstName = norm(o["First Name"]) || norm(o["Player First Name"]) || norm(o["Participant First Name"]);
       const lastName = norm(o["Last Name"]) || norm(o["Player Last Name"]) || norm(o["Participant Last Name"]);
@@ -302,7 +309,7 @@ export async function POST(req: Request) {
       const isDraftEligible = eligibleDob && wantsU13;
       if (isDraftEligible) eligible += 1;
 
-      const notes = norm(o["Experience: Tell us about your player..."]) || norm(o["Experience"]) || null;
+      const experience = norm(rawRow[73] ?? "") || null;
 
       const dedupeKey =
         registrationId
@@ -330,7 +337,8 @@ export async function POST(req: Request) {
         guardian2Name,
         primaryPhone,
         primaryEmail,
-        notes,
+        notes: null,
+        experience,
         isDraftEligible,
         isDrafted: false,
         draftedTeamId: null,

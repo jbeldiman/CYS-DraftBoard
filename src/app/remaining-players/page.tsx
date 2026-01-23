@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type Role = "ADMIN" | "BOARD" | "COACH" | "PARENT";
 
@@ -27,6 +27,9 @@ export default function RemainingPlayersPage() {
 
   const canEdit = sessionUser?.role === "ADMIN" || sessionUser?.role === "BOARD";
 
+  const lastSigRef = useRef<string>("");
+  const abortRef = useRef<AbortController | null>(null);
+
   async function loadSession() {
     try {
       const res = await fetch("/api/auth/session", { cache: "no-store" });
@@ -37,22 +40,58 @@ export default function RemainingPlayersPage() {
     }
   }
 
-  async function load() {
-    setLoading(true);
+  function buildSig(list: Player[]) {
+    return list
+      .map(
+        (p) =>
+          `${p.id}|${p.fullName}|${p.experience ?? ""}|${p.fall2025Rating ?? ""}|${p.spring2025Rating ?? ""}`
+      )
+      .join("~");
+  }
+
+  async function load(opts?: { silent?: boolean }) {
+    const silent = !!opts?.silent;
+
+    if (!silent) setLoading(true);
+
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
-      const res = await fetch("/api/draft/players?eligible=true&drafted=false", { cache: "no-store" });
+      const res = await fetch("/api/draft/players?eligible=true&drafted=false", {
+        cache: "no-store",
+        signal: ac.signal,
+      });
       const json = await res.json();
-      setPlayers(json.players ?? []);
+      const next = (json.players ?? []) as Player[];
+
+      const sig = buildSig(next);
+      if (sig !== lastSigRef.current) {
+        lastSigRef.current = sig;
+        setPlayers(next);
+      }
+    } catch (e: any) {
+      if (e?.name !== "AbortError") {
+        if (!silent) setPlayers([]);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
   useEffect(() => {
     loadSession();
-    load();
-    const t = setInterval(load, 2000);
-    return () => clearInterval(t);
+    load({ silent: false });
+
+    const t = setInterval(() => {
+      load({ silent: true });
+    }, 2000);
+
+    return () => {
+      clearInterval(t);
+      abortRef.current?.abort();
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -86,7 +125,7 @@ export default function RemainingPlayersPage() {
           ],
         }),
       });
-      await load();
+      await load({ silent: true });
     } finally {
       setSavingId(null);
     }
@@ -106,7 +145,7 @@ export default function RemainingPlayersPage() {
           placeholder="Search player..."
           className="w-full max-w-md rounded-md border px-3 py-2 text-sm"
         />
-        <button onClick={load} className="rounded-md border px-3 py-2 text-sm hover:bg-accent">
+        <button onClick={() => load({ silent: false })} className="rounded-md border px-3 py-2 text-sm hover:bg-accent">
           Refresh
         </button>
       </div>
