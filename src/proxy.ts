@@ -8,13 +8,12 @@ export async function proxy(req: NextRequest) {
   const { nextUrl } = req;
   const path = nextUrl.pathname;
 
+  const isRootRoute = path === "/";
   const isAdminRoute = path.startsWith("/admin");
   const isDraftRoute = path.startsWith("/draft");
-  const isCoachHubRoute =
-    path.startsWith("/siblings") ||
-    path.startsWith("/history");
+  const isCoachHubRoute = path.startsWith("/siblings") || path.startsWith("/history");
 
-  const isProtectedRoute = isAdminRoute || isDraftRoute || isCoachHubRoute;
+  const isProtectedRoute = isRootRoute || isAdminRoute || isDraftRoute || isCoachHubRoute;
 
   if (!isProtectedRoute) {
     return NextResponse.next();
@@ -28,13 +27,11 @@ export async function proxy(req: NextRequest) {
 
   const role = ((token as any).role as Role | undefined) ?? "PARENT";
 
-  
   if (isAdminRoute && role !== "ADMIN" && role !== "BOARD") {
     return NextResponse.redirect(new URL("/draft", nextUrl));
   }
 
-
-  if (role === "PARENT" && !isDraftRoute) {
+  if (role === "PARENT" && !isDraftRoute && !isRootRoute) {
     return NextResponse.redirect(new URL("/draft", nextUrl));
   }
 
