@@ -1,0 +1,174 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "binary"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  COACH
+  PARENT
+}
+
+enum DraftPhase {
+  SETUP
+  LIVE
+  COMPLETE
+}
+
+model User {
+  id            String   @id @default(cuid())
+  name          String?
+  email         String?  @unique
+  passwordHash  String?
+  role          Role     @default(PARENT)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  coachedTeams  DraftTeam[] @relation("CoachTeams")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model DraftEvent {
+  id                 String     @id @default(cuid())
+  name               String
+  scheduledAt        DateTime
+  phase              DraftPhase @default(SETUP)
+
+  currentPick        Int        @default(1)
+  pickClockSeconds   Int        @default(120)
+  isPaused           Boolean    @default(true)
+  clockEndsAt        DateTime?
+  pauseRemainingSecs Int?
+
+  teams              DraftTeam[]
+  players            DraftPlayer[]
+  picks              DraftPick[]
+
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+}
+
+model DraftTeam {
+  id           String     @id @default(cuid())
+  draftEventId String
+  draftEvent   DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
+
+  name         String
+  order        Int
+
+  coachUserId  String?
+  coachUser    User?      @relation("CoachTeams", fields: [coachUserId], references: [id], onDelete: SetNull)
+
+  draftedPlayers DraftPlayer[] @relation("TeamDraftedPlayers")
+  picks          DraftPick[]
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([draftEventId, order])
+  @@unique([draftEventId, name])
+}
+
+model DraftPlayer {
+  id             String     @id @default(cuid())
+  draftEventId   String
+  draftEvent     DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
+
+  registrationId String?    @unique
+  firstName      String
+  lastName       String
+  fullName       String
+  gender         String?
+  dob            DateTime?
+  birthYear      Int?
+  leagueChoice   String?
+  wantsU13       Boolean    @default(false)
+
+  jerseySize     String?
+
+  guardian1Name  String?
+  guardian2Name  String?
+  primaryPhone   String?
+  primaryEmail   String?
+
+  notes          String?
+  rank           Int?
+
+  isDraftEligible Boolean   @default(false)
+  isDrafted       Boolean   @default(false)
+
+  draftedTeamId String?
+  draftedTeam   DraftTeam?  @relation("TeamDraftedPlayers", fields: [draftedTeamId], references: [id], onDelete: SetNull)
+  draftedAt     DateTime?
+
+  picks         DraftPick[]
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([draftEventId, isDraftEligible, isDrafted])
+  @@index([draftEventId, lastName, firstName])
+}
+
+model DraftPick {
+  id            String      @id @default(cuid())
+  draftEventId  String
+  draftEvent    DraftEvent  @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
+
+  overallNumber Int
+  round         Int
+  pickInRound   Int
+
+  teamId        String
+  team          DraftTeam   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  playerId      String
+  player        DraftPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  madeAt        DateTime    @default(now())
+
+  @@unique([draftEventId, overallNumber])
+  @@unique([draftEventId, playerId])
+  @@index([draftEventId, teamId])
+}
