@@ -206,6 +206,32 @@ async function latestEvent() {
   return created;
 }
 
+function findExperienceHeaderKey(header: string[]) {
+  const wanted = [
+    "Experience: Tell us about your player. How many seasons have they played soccer? What positions do they like to play?",
+    "Experience: Tell us about your player. How many seasons have they played soccer? What positions do they like to play?",
+    "Experience: Tell us about your player... How many seasons have they played soccer? What positions do they like to play?",
+    "Experience: Tell us about your player...",
+    "Experience",
+  ];
+
+  const lowerHeader = header.map((h) => norm(h).toLowerCase());
+
+  for (const k of wanted) {
+    const idx = lowerHeader.indexOf(norm(k).toLowerCase());
+    if (idx >= 0) return header[idx];
+  }
+
+  const idxContains = lowerHeader.findIndex(
+    (h) =>
+      h.startsWith("experience: tell us about your player") ||
+      (h.includes("experience: tell us about your player") && h.includes("seasons") && h.includes("positions"))
+  );
+  if (idxContains >= 0) return header[idxContains];
+
+  return null;
+}
+
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -240,6 +266,9 @@ export async function POST(req: Request) {
       for (let i = 0; i < header.length; i++) obj[header[i]] = r[i] ?? "";
       objects.push(obj);
     }
+
+    const expHeaderKey = findExperienceHeaderKey(header);
+    const expIdxFallback = expHeaderKey ? -1 : 73;
 
     const draftEventId = event.id;
 
@@ -309,7 +338,12 @@ export async function POST(req: Request) {
       const isDraftEligible = eligibleDob && wantsU13;
       if (isDraftEligible) eligible += 1;
 
-      const experience = norm(rawRow[73] ?? "") || null;
+      let experience: string | null = null;
+      if (expHeaderKey) {
+        experience = norm(o[expHeaderKey]) || null;
+      } else {
+        experience = norm(rawRow[expIdxFallback] ?? "") || null;
+      }
 
       const dedupeKey =
         registrationId
