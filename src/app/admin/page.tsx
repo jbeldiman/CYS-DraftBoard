@@ -9,6 +9,15 @@ type Coach = {
   createdAt: string;
 };
 
+type ImportResult = {
+  ok?: boolean;
+  season?: string;
+  processed?: number;
+  updated?: number;
+  notFound?: number;
+  error?: string;
+};
+
 export default function AdminPage() {
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [name, setName] = useState("");
@@ -21,11 +30,18 @@ export default function AdminPage() {
   const [pickClockSeconds, setPickClockSeconds] = useState<number>(120);
   const [draftStatus, setDraftStatus] = useState<any>(null);
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
-  const [uploadErr, setUploadErr] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState(false);
+  const registrationsInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploadingRegs, setUploadingRegs] = useState(false);
+  const [regsMsg, setRegsMsg] = useState<string | null>(null);
+  const [regsErr, setRegsErr] = useState<string | null>(null);
+  const [dragOverRegs, setDragOverRegs] = useState(false);
+
+  const springInputRef = useRef<HTMLInputElement | null>(null);
+  const fallInputRef = useRef<HTMLInputElement | null>(null);
+  const [importingSpring, setImportingSpring] = useState(false);
+  const [importingFall, setImportingFall] = useState(false);
+  const [ratingsMsg, setRatingsMsg] = useState<string | null>(null);
+  const [ratingsErr, setRatingsErr] = useState<string | null>(null);
 
   async function loadCoaches() {
     const res = await fetch("/api/admin/coaches", { cache: "no-store" });
@@ -140,10 +156,10 @@ export default function AdminPage() {
     await loadDraftState();
   }
 
-  async function uploadCsv(file: File) {
-    setUploadMsg(null);
-    setUploadErr(null);
-    setUploading(true);
+  async function uploadRegistrationsCsv(file: File) {
+    setRegsMsg(null);
+    setRegsErr(null);
+    setUploadingRegs(true);
 
     try {
       const fd = new FormData();
@@ -165,14 +181,51 @@ export default function AdminPage() {
 
       if (!res.ok) {
         const message = json?.error ?? (text && text.trim() ? text.trim() : "Upload failed");
-        setUploadErr(message);
+        setRegsErr(message);
         return;
       }
 
-      setUploadMsg(`Uploaded. Processed ${json.processed} players. Eligible: ${json.eligibleRows}.`);
+      setRegsMsg(`Uploaded. Processed ${json.processed} players. Eligible: ${json.eligibleRows}.`);
       await loadDraftState();
     } finally {
-      setUploading(false);
+      setUploadingRegs(false);
+    }
+  }
+
+  async function importRatings(file: File, season: "spring2025" | "fall2025") {
+    setRatingsMsg(null);
+    setRatingsErr(null);
+
+    if (season === "spring2025") setImportingSpring(true);
+    else setImportingFall(true);
+
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("season", season);
+
+      const res = await fetch("/api/draft/admin/import-ratings", {
+        method: "POST",
+        body: fd,
+      });
+
+      const json = (await res.json().catch(() => ({}))) as ImportResult;
+
+      if (!res.ok) {
+        setRatingsErr(json?.error ?? "Ratings import failed");
+        return;
+      }
+
+      const processed = json.processed ?? 0;
+      const updated = json.updated ?? 0;
+      const notFound = json.notFound ?? 0;
+
+      setRatingsMsg(
+        `${season === "spring2025" ? "Spring 2025" : "Fall 2025"} imported. Rows: ${processed}. Updated: ${updated}. Not matched: ${notFound}.`
+      );
+    } finally {
+      if (season === "spring2025") setImportingSpring(false);
+      else setImportingFall(false);
     }
   }
 
@@ -191,7 +244,7 @@ export default function AdminPage() {
 
       <hr style={{ margin: "16px 0" }} />
 
-      <h2 style={{ fontSize: 18, fontWeight: 700 }}>Upload CSV Here</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 700 }}>Upload Registrations CSV</h2>
       {uploadLocked ? (
         <div style={{ marginTop: 8, color: "#b00020", fontWeight: 800 }}>
           Upload is locked while the draft is LIVE. Stop the draft to unlock uploads.
@@ -203,78 +256,158 @@ export default function AdminPage() {
           onDragOver={(e) => {
             if (uploadLocked) return;
             e.preventDefault();
-            setDragOver(true);
+            setDragOverRegs(true);
           }}
-          onDragLeave={() => setDragOver(false)}
+          onDragLeave={() => setDragOverRegs(false)}
           onDrop={(e) => {
             if (uploadLocked) return;
             e.preventDefault();
-            setDragOver(false);
+            setDragOverRegs(false);
             const f = e.dataTransfer.files?.[0];
-            if (f) uploadCsv(f);
+            if (f) uploadRegistrationsCsv(f);
           }}
           onClick={() => {
             if (uploadLocked) return;
-            fileInputRef.current?.click();
+            registrationsInputRef.current?.click();
           }}
           style={{
             marginTop: 10,
-            border: `2px dashed ${dragOver ? "#111" : "#bbb"}`,
+            border: `2px dashed ${dragOverRegs ? "#111" : "#bbb"}`,
             borderRadius: 14,
             padding: 18,
             cursor: uploadLocked ? "not-allowed" : "pointer",
-            background: dragOver ? "rgba(0,0,0,0.04)" : "transparent",
+            background: dragOverRegs ? "rgba(0,0,0,0.04)" : "transparent",
             opacity: uploadLocked ? 0.7 : 1,
           }}
         >
           <div style={{ fontWeight: 800, marginBottom: 6 }}>Drag & drop registrations CSV here</div>
           <div style={{ opacity: 0.8, fontSize: 13 }}>
-            Or click to select a file. This will import players, eligibility, jersey size, and parent contact info.
+            Or click to select a file. This imports players, eligibility, jersey size, and parent contact info.
           </div>
 
-          <div
-            style={{
-              marginTop: 10,
-              display: "flex",
-              gap: 10,
-              alignItems: "center",
-              flexWrap: "wrap",
-            }}
-          >
+          <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <button
               type="button"
-              disabled={uploading || uploadLocked}
+              disabled={uploadingRegs || uploadLocked}
               style={{
                 padding: "8px 10px",
                 borderRadius: 8,
                 border: "1px solid #222",
-                background: uploading || uploadLocked ? "#888" : "#111",
+                background: uploadingRegs || uploadLocked ? "#888" : "#111",
                 color: "white",
                 fontWeight: 800,
-                cursor: uploading || uploadLocked ? "not-allowed" : "pointer",
+                cursor: uploadingRegs || uploadLocked ? "not-allowed" : "pointer",
               }}
             >
-              {uploadLocked ? "Upload Locked (LIVE)" : uploading ? "Uploading…" : "Choose File"}
+              {uploadLocked ? "Upload Locked (LIVE)" : uploadingRegs ? "Uploading…" : "Choose File"}
             </button>
 
-            {uploadMsg ? <div style={{ color: "green" }}>{uploadMsg}</div> : null}
-            {uploadErr ? <div style={{ color: "crimson" }}>{uploadErr}</div> : null}
+            {regsMsg ? <div style={{ color: "green" }}>{regsMsg}</div> : null}
+            {regsErr ? <div style={{ color: "crimson" }}>{regsErr}</div> : null}
           </div>
 
           <input
-            ref={fileInputRef}
+            ref={registrationsInputRef}
             type="file"
             accept=".csv,text/csv"
-            disabled={uploading || uploadLocked}
+            disabled={uploadingRegs || uploadLocked}
             style={{ display: "none" }}
             onChange={(e) => {
               if (uploadLocked) return;
               const f = e.target.files?.[0];
-              if (f) uploadCsv(f);
+              if (f) uploadRegistrationsCsv(f);
               e.currentTarget.value = "";
             }}
           />
         </div>
+      </div>
+
+      <hr style={{ margin: "16px 0" }} />
+
+      <h2 style={{ fontSize: 18, fontWeight: 700 }}>Import Player Ratings</h2>
+      {uploadLocked ? (
+        <div style={{ marginTop: 8, color: "#b00020", fontWeight: 800 }}>
+          Ratings import is locked while the draft is LIVE. Stop the draft to unlock imports.
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: 10, display: "grid", gap: 10, maxWidth: 820 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            type="button"
+            disabled={uploadLocked || importingSpring}
+            onClick={() => {
+              if (uploadLocked) return;
+              springInputRef.current?.click();
+            }}
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #222",
+              background: uploadLocked || importingSpring ? "#888" : "#111",
+              color: "white",
+              fontWeight: 800,
+              cursor: uploadLocked || importingSpring ? "not-allowed" : "pointer",
+            }}
+          >
+            {importingSpring ? "Importing Spring…" : "Import Spring 2025 Ratings"}
+          </button>
+
+          <button
+            type="button"
+            disabled={uploadLocked || importingFall}
+            onClick={() => {
+              if (uploadLocked) return;
+              fallInputRef.current?.click();
+            }}
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #222",
+              background: uploadLocked || importingFall ? "#888" : "#111",
+              color: "white",
+              fontWeight: 800,
+              cursor: uploadLocked || importingFall ? "not-allowed" : "pointer",
+            }}
+          >
+            {importingFall ? "Importing Fall…" : "Import Fall 2025 Ratings"}
+          </button>
+
+          {ratingsMsg ? <div style={{ color: "green", fontWeight: 700 }}>{ratingsMsg}</div> : null}
+          {ratingsErr ? <div style={{ color: "crimson", fontWeight: 700 }}>{ratingsErr}</div> : null}
+        </div>
+
+        <div style={{ opacity: 0.8, fontSize: 13 }}>
+          Ratings CSV format: <b>Column A</b> = Player Full Name, <b>Column B</b> = Rating (number). Names must match closely.
+        </div>
+
+        <input
+          ref={springInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          disabled={uploadLocked || importingSpring}
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (uploadLocked) return;
+            const f = e.target.files?.[0];
+            if (f) importRatings(f, "spring2025");
+            e.currentTarget.value = "";
+          }}
+        />
+
+        <input
+          ref={fallInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          disabled={uploadLocked || importingFall}
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (uploadLocked) return;
+            const f = e.target.files?.[0];
+            if (f) importRatings(f, "fall2025");
+            e.currentTarget.value = "";
+          }}
+        />
       </div>
 
       <hr style={{ margin: "16px 0" }} />
@@ -350,14 +483,7 @@ export default function AdminPage() {
           </button>
         </div>
 
-        <div
-          style={{
-            padding: 12,
-            border: "1px solid #ddd",
-            borderRadius: 10,
-            maxWidth: 620,
-          }}
-        >
+        <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 10, maxWidth: 620 }}>
           <div style={{ fontWeight: 800 }}>Current Draft Status</div>
           <div style={{ marginTop: 6, opacity: 0.9, lineHeight: 1.5 }}>
             <div>
