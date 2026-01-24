@@ -154,7 +154,7 @@ export default function RemainingPlayersPage() {
                 <div className="col-span-3 font-semibold">{p.fullName}</div>
 
                 <div className="col-span-7">
-                  <div className="text-muted-foreground truncate" title={p.experience ?? ""}>
+                  <div className="text-muted-foreground whitespace-pre-wrap break-words" title={p.experience ?? ""}>
                     {p.experience ?? ""}
                   </div>
                 </div>
