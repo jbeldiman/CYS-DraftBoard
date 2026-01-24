@@ -7,13 +7,9 @@ type Role = "ADMIN" | "BOARD" | "COACH" | "PARENT";
 type Player = {
   id: string;
   fullName: string;
-  dob: string | null;
-  leagueChoice: string | null;
-  jerseySize: string | null;
   notes: string | null;
-  experience?: string | null;
-  fall2025Rating?: number | null;
-  spring2025Rating?: number | null;
+  experience: string | null;
+  fall2025Rating: number | null;
   isDrafted: boolean;
   draftedTeam: { name: string; order: number } | null;
 };
@@ -81,7 +77,7 @@ export default function FullEligiblePlayersPage() {
               notes: p.notes ?? null,
               experience: (p.experience ?? "").toString(),
               fall2025Rating: p.fall2025Rating ?? null,
-              spring2025Rating: p.spring2025Rating ?? null,
+              spring2025Rating: null,
             },
           ],
         }),
@@ -114,10 +110,8 @@ export default function FullEligiblePlayersPage() {
       <div className="mt-6 rounded-xl border overflow-hidden">
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
           <div className="col-span-3">Player</div>
-          <div className="col-span-3">Experience</div>
+          <div className="col-span-7">Parent&apos;s Comment</div>
           <div className="col-span-1">Rating</div>
-          <div className="col-span-2">Fall 2025</div>
-          <div className="col-span-2">Spring 2025</div>
           <div className="col-span-1 text-right">Save</div>
         </div>
 
@@ -131,22 +125,13 @@ export default function FullEligiblePlayersPage() {
               <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-3 text-sm items-center">
                 <div className="col-span-3 font-semibold">{p.fullName}</div>
 
-                <div className="col-span-3">
-                  {canEdit ? (
-                    <input
-                      value={(p.experience ?? "").toString()}
-                      onChange={(e) => setField(p.id, { experience: e.target.value })}
-                      className="w-full rounded-md border px-2 py-1 text-sm"
-                      placeholder="Experience"
-                    />
-                  ) : (
-                    <div className="text-muted-foreground truncate">{p.experience ?? ""}</div>
-                  )}
+                <div className="col-span-7">
+                  <div className="text-muted-foreground truncate" title={p.experience ?? ""}>
+                    {p.experience ?? ""}
+                  </div>
                 </div>
 
-                <div className="col-span-1 text-muted-foreground">—</div>
-
-                <div className="col-span-2">
+                <div className="col-span-1">
                   {canEdit ? (
                     <input
                       type="number"
@@ -157,28 +142,9 @@ export default function FullEligiblePlayersPage() {
                         })
                       }
                       className="w-full rounded-md border px-2 py-1 text-sm"
-                      placeholder=""
                     />
                   ) : (
                     <div className="text-muted-foreground">{p.fall2025Rating ?? ""}</div>
-                  )}
-                </div>
-
-                <div className="col-span-2">
-                  {canEdit ? (
-                    <input
-                      type="number"
-                      value={p.spring2025Rating ?? ""}
-                      onChange={(e) =>
-                        setField(p.id, {
-                          spring2025Rating: e.target.value === "" ? null : Number(e.target.value),
-                        })
-                      }
-                      className="w-full rounded-md border px-2 py-1 text-sm"
-                      placeholder=""
-                    />
-                  ) : (
-                    <div className="text-muted-foreground">{p.spring2025Rating ?? ""}</div>
                   )}
                 </div>
 

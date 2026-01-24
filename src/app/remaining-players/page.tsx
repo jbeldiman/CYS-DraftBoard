@@ -7,16 +7,27 @@ type Role = "ADMIN" | "BOARD" | "COACH" | "PARENT";
 type Player = {
   id: string;
   fullName: string;
-  dob: string | null;
-  leagueChoice: string | null;
-  jerseySize: string | null;
   notes: string | null;
-  experience?: string | null;
-  fall2025Rating?: number | null;
-  spring2025Rating?: number | null;
+  experience: string | null;
+  fall2025Rating: number | null;
 };
 
 type SessionUser = { id?: string; role?: Role } | null;
+
+function stableHash(players: any[]) {
+  try {
+    return JSON.stringify(
+      (players ?? []).map((p) => ({
+        id: p.id,
+        fullName: p.fullName,
+        experience: p.experience ?? null,
+        fall2025Rating: p.fall2025Rating ?? null,
+      }))
+    );
+  } catch {
+    return String(Date.now());
+  }
+}
 
 export default function RemainingPlayersPage() {
   const [players, setPlayers] = useState<Player[]>([]);
@@ -25,10 +36,10 @@ export default function RemainingPlayersPage() {
   const [sessionUser, setSessionUser] = useState<SessionUser>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  const canEdit = sessionUser?.role === "ADMIN" || sessionUser?.role === "BOARD";
+  const lastHashRef = useRef<string>("");
+  const hasLoadedOnceRef = useRef(false);
 
-  const lastSigRef = useRef<string>("");
-  const abortRef = useRef<AbortController | null>(null);
+  const canEdit = sessionUser?.role === "ADMIN" || sessionUser?.role === "BOARD";
 
   async function loadSession() {
     try {
@@ -40,58 +51,32 @@ export default function RemainingPlayersPage() {
     }
   }
 
-  function buildSig(list: Player[]) {
-    return list
-      .map(
-        (p) =>
-          `${p.id}|${p.fullName}|${p.experience ?? ""}|${p.fall2025Rating ?? ""}|${p.spring2025Rating ?? ""}`
-      )
-      .join("~");
-  }
-
-  async function load(opts?: { silent?: boolean }) {
-    const silent = !!opts?.silent;
-
+  async function load(silent?: boolean) {
     if (!silent) setLoading(true);
-
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-
     try {
-      const res = await fetch("/api/draft/players?eligible=true&drafted=false", {
-        cache: "no-store",
-        signal: ac.signal,
-      });
+      const res = await fetch("/api/draft/players?eligible=true&drafted=false", { cache: "no-store" });
       const json = await res.json();
-      const next = (json.players ?? []) as Player[];
+      const nextPlayers = json.players ?? [];
+      const nextHash = stableHash(nextPlayers);
 
-      const sig = buildSig(next);
-      if (sig !== lastSigRef.current) {
-        lastSigRef.current = sig;
-        setPlayers(next);
-      }
-    } catch (e: any) {
-      if (e?.name !== "AbortError") {
-        if (!silent) setPlayers([]);
+      if (nextHash !== lastHashRef.current) {
+        lastHashRef.current = nextHash;
+        setPlayers(nextPlayers);
       }
     } finally {
       if (!silent) setLoading(false);
+      if (!hasLoadedOnceRef.current) {
+        hasLoadedOnceRef.current = true;
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
     loadSession();
-    load({ silent: false });
-
-    const t = setInterval(() => {
-      load({ silent: true });
-    }, 2000);
-
-    return () => {
-      clearInterval(t);
-      abortRef.current?.abort();
-    };
+    load(false);
+    const t = setInterval(() => load(true), 2000);
+    return () => clearInterval(t);
   }, []);
 
   const filtered = useMemo(() => {
@@ -120,12 +105,12 @@ export default function RemainingPlayersPage() {
               notes: p.notes ?? null,
               experience: (p.experience ?? "").toString(),
               fall2025Rating: p.fall2025Rating ?? null,
-              spring2025Rating: p.spring2025Rating ?? null,
+              spring2025Rating: null,
             },
           ],
         }),
       });
-      await load({ silent: true });
+      await load(true);
     } finally {
       setSavingId(null);
     }
@@ -145,18 +130,16 @@ export default function RemainingPlayersPage() {
           placeholder="Search player..."
           className="w-full max-w-md rounded-md border px-3 py-2 text-sm"
         />
-        <button onClick={() => load({ silent: false })} className="rounded-md border px-3 py-2 text-sm hover:bg-accent">
+        <button onClick={() => load(false)} className="rounded-md border px-3 py-2 text-sm hover:bg-accent">
           Refresh
         </button>
       </div>
 
       <div className="mt-6 rounded-xl border overflow-hidden">
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
-          <div className="col-span-4">Player</div>
-          <div className="col-span-3">Experience</div>
+          <div className="col-span-3">Player</div>
+          <div className="col-span-7">Parent&apos;s Comment</div>
           <div className="col-span-1">Rating</div>
-          <div className="col-span-2">Fall 2025</div>
-          <div className="col-span-1">Spring 2025</div>
           <div className="col-span-1 text-right">Save</div>
         </div>
 
@@ -168,24 +151,15 @@ export default function RemainingPlayersPage() {
           <div className="divide-y">
             {filtered.map((p) => (
               <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-3 text-sm items-center">
-                <div className="col-span-4 font-semibold">{p.fullName}</div>
+                <div className="col-span-3 font-semibold">{p.fullName}</div>
 
-                <div className="col-span-3">
-                  {canEdit ? (
-                    <input
-                      value={(p.experience ?? "").toString()}
-                      onChange={(e) => setField(p.id, { experience: e.target.value })}
-                      className="w-full rounded-md border px-2 py-1 text-sm"
-                      placeholder="Experience"
-                    />
-                  ) : (
-                    <div className="text-muted-foreground truncate">{p.experience ?? ""}</div>
-                  )}
+                <div className="col-span-7">
+                  <div className="text-muted-foreground truncate" title={p.experience ?? ""}>
+                    {p.experience ?? ""}
+                  </div>
                 </div>
 
-                <div className="col-span-1 text-muted-foreground">—</div>
-
-                <div className="col-span-2">
+                <div className="col-span-1">
                   {canEdit ? (
                     <input
                       type="number"
@@ -199,23 +173,6 @@ export default function RemainingPlayersPage() {
                     />
                   ) : (
                     <div className="text-muted-foreground">{p.fall2025Rating ?? ""}</div>
-                  )}
-                </div>
-
-                <div className="col-span-1">
-                  {canEdit ? (
-                    <input
-                      type="number"
-                      value={p.spring2025Rating ?? ""}
-                      onChange={(e) =>
-                        setField(p.id, {
-                          spring2025Rating: e.target.value === "" ? null : Number(e.target.value),
-                        })
-                      }
-                      className="w-full rounded-md border px-2 py-1 text-sm"
-                    />
-                  ) : (
-                    <div className="text-muted-foreground">{p.spring2025Rating ?? ""}</div>
                   )}
                 </div>
 
