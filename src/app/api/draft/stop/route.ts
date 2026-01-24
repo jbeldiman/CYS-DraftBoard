@@ -9,36 +9,64 @@ function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
 }
 
-async function latestEvent() {
+async function latestEventOrCreate() {
   const e = await prisma.draftEvent.findFirst({ orderBy: { createdAt: "desc" } });
-  if (!e) throw new Error("No draft event found");
-  return e;
+  if (e) return e;
+
+  return prisma.draftEvent.create({
+    data: {
+      name: "CYS Draft Night",
+      scheduledAt: new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
+      phase: "SETUP",
+      currentPick: 1,
+      pickClockSeconds: 120,
+      isPaused: true,
+    },
+  });
 }
 
 export async function POST() {
-  const session = await getServerSession(authOptions);
-  if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  try {
+    const session = await getServerSession(authOptions);
+    if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const e = await latestEvent();
+    const e = await latestEventOrCreate();
 
-  const updated = await prisma.draftEvent.update({
-    where: { id: e.id },
-    data: {
-      phase: "SETUP",
-      isPaused: true,
-      clockEndsAt: null,
-      pauseRemainingSecs: null,
-    },
-    select: {
-      id: true,
-      phase: true,
-      currentPick: true,
-      pickClockSeconds: true,
-      isPaused: true,
-      clockEndsAt: true,
-      pauseRemainingSecs: true,
-    },
-  });
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.draftPick.deleteMany({ where: { draftEventId: e.id } });
 
-  return NextResponse.json({ event: updated });
+      await tx.draftPlayer.updateMany({
+        where: { draftEventId: e.id },
+        data: {
+          isDrafted: false,
+          draftedTeamId: null,
+          draftedAt: null,
+        },
+      });
+
+      return tx.draftEvent.update({
+        where: { id: e.id },
+        data: {
+          phase: "SETUP",
+          currentPick: 1,
+          isPaused: true,
+          clockEndsAt: null,
+          pauseRemainingSecs: null,
+        },
+        select: {
+          id: true,
+          phase: true,
+          currentPick: true,
+          pickClockSeconds: true,
+          isPaused: true,
+          clockEndsAt: true,
+          pauseRemainingSecs: true,
+        },
+      });
+    });
+
+    return NextResponse.json({ event: updated });
+  } catch (err: any) {
+    return NextResponse.json({ error: err?.message ? String(err.message) : "Failed to stop draft" }, { status: 500 });
+  }
 }
