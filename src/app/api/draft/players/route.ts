@@ -8,20 +8,8 @@ async function latestEventId() {
     orderBy: { createdAt: "desc" },
     select: { id: true },
   });
-  if (!e?.id) {
-    const created = await prisma.draftEvent.create({
-      data: {
-        name: "CYS Draft Night",
-        scheduledAt: new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-        phase: "SETUP",
-        currentPick: 1,
-        pickClockSeconds: 120,
-        isPaused: true,
-      },
-      select: { id: true },
-    });
-    return created.id;
-  }
+
+  if (!e?.id) throw new Error("No draft event found");
   return e.id;
 }
 
@@ -59,11 +47,12 @@ export async function GET(req: Request) {
       guardian2Name: true,
       primaryPhone: true,
       primaryEmail: true,
-      notes: true,
+      experience: true,
+      rank: true,
       isDraftEligible: true,
       isDrafted: true,
       draftedAt: true,
-      draftedTeam: { select: { id: true, name: true, order: true } },
+      draftedTeam: { select: { name: true, order: true } },
     },
   });
 
