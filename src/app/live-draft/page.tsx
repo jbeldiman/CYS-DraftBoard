@@ -15,14 +15,18 @@ function Pill({
   tone = "neutral",
 }: {
   children: React.ReactNode;
-  tone?: "neutral" | "good" | "warn";
+  tone?: "neutral" | "good" | "warn" | "bad";
 }) {
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs shadow-sm",
-        tone === "good" && "bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-100 dark:border-emerald-900/40",
-        tone === "warn" && "bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/30 dark:text-amber-100 dark:border-amber-900/40",
+        "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs shadow-sm whitespace-nowrap",
+        tone === "good" &&
+          "bg-emerald-50 text-emerald-900 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-100 dark:border-emerald-900/40",
+        tone === "warn" &&
+          "bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/30 dark:text-amber-100 dark:border-amber-900/40",
+        tone === "bad" &&
+          "bg-rose-50 text-rose-900 border-rose-200 dark:bg-rose-950/30 dark:text-rose-100 dark:border-rose-900/40",
         tone === "neutral" && "bg-card text-muted-foreground"
       )}
     >
@@ -48,23 +52,44 @@ type DraftState = {
     name: string;
     order: number;
   }[];
-  recentPicks: {
-    id: string;
-    overallNumber: number;
-    round: number;
-    pickInRound: number;
-    madeAt: string;
-    team: { id: string; name: string; order: number };
-    player: { id: string; fullName: string; rank: number | null };
-  }[];
+  recentPicks: DraftPick[];
   counts: { undrafted: number; drafted: number };
+};
+
+type DraftPick = {
+  id: string;
+  overallNumber: number;
+  round: number;
+  pickInRound: number;
+  madeAt: string;
+  team: { id: string; name: string; order: number };
+  player: { id: string; fullName: string; rank: number | null };
 };
 
 type RemainingPlayer = {
   id: string;
   fullName: string;
-  jerseySize: string | null;
+  rating: number | null; 
 };
+
+const DEFAULT_ROUNDS = 16; 
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function Stars({ value }: { value: number | null }) {
+  const v = value == null ? 0 : clamp(Math.round(value), 0, 5);
+  return (
+    <div className="flex items-center gap-0.5" aria-label={value == null ? "No rating" : `${v} out of 5`}>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <span key={i} className={cx("text-base leading-none", i < v ? "text-amber-500" : "text-muted-foreground/40")}>
+          ★
+        </span>
+      ))}
+    </div>
+  );
+}
 
 export default function LiveDraftPage() {
   const fallbackScheduledTarget = useMemo(() => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)), []);
@@ -72,8 +97,11 @@ export default function LiveDraftPage() {
 
   const [state, setState] = useState<DraftState | null>(null);
   const [loading, setLoading] = useState(true);
+
   const [remaining, setRemaining] = useState<RemainingPlayer[]>([]);
   const [q, setQ] = useState("");
+
+  const [allPicks, setAllPicks] = useState<DraftPick[] | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -92,12 +120,54 @@ export default function LiveDraftPage() {
     }
   }
 
+
+  async function loadAllPicksOptional() {
+    try {
+      const res = await fetch("/api/draft/picks", { cache: "no-store" });
+      if (!res.ok) throw new Error("no picks endpoint");
+      const json = await res.json().catch(() => ({}));
+      const picks = (json.picks ?? []) as DraftPick[];
+      if (Array.isArray(picks) && picks.length) setAllPicks(picks);
+    } catch {
+      
+    }
+  }
+
   async function loadRemaining() {
     try {
       const res = await fetch("/api/draft/players?eligible=true&drafted=false", { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
+
+
       setRemaining(
-        (json.players ?? []).map((p: any) => ({ id: p.id, fullName: p.fullName, jerseySize: p.jerseySize ?? null }))
+        (json.players ?? []).map((p: any) => {
+          const rawRating =
+            p.rating ??
+            p.boardRating ??
+            p.playerRating ??
+            null;
+
+          const rank = p.rank ?? p.playerRank ?? null;
+
+          const ratingFromRank =
+            rank == null
+              ? null
+              : rank <= 10
+                ? 5
+                : rank <= 20
+                  ? 4
+                  : rank <= 30
+                    ? 3
+                    : rank <= 40
+                      ? 2
+                      : 1;
+
+          return {
+            id: p.id,
+            fullName: p.fullName,
+            rating: rawRating ?? ratingFromRank,
+          } as RemainingPlayer;
+        })
       );
     } catch {
       setRemaining([]);
@@ -107,10 +177,14 @@ export default function LiveDraftPage() {
   useEffect(() => {
     loadState();
     loadRemaining();
+    loadAllPicksOptional();
+
     const t = setInterval(() => {
       loadState();
       loadRemaining();
+      loadAllPicksOptional();
     }, 2000);
+
     return () => clearInterval(t);
   }, []);
 
@@ -169,7 +243,16 @@ export default function LiveDraftPage() {
   const liveSec = liveTotalSeconds % 60;
 
   const teams = state?.teams ?? [];
-  const picks = state?.recentPicks ?? [];
+  const picksForSidebar = state?.recentPicks ?? [];
+
+
+  const picksForBoard = (allPicks && allPicks.length ? allPicks : state?.recentPicks ?? []).slice();
+
+
+  const teamCount = Math.max(teams.length, 1);
+
+  const maxRoundSeen = picksForBoard.reduce((m, p) => Math.max(m, p.round), 1);
+  const computedRoundsNeeded = Math.max(DEFAULT_ROUNDS, maxRoundSeen);
 
   const expectedIndex = useMemo(() => {
     const cur = event?.currentPick ?? 1;
@@ -178,6 +261,24 @@ export default function LiveDraftPage() {
   }, [event?.currentPick, teams.length]);
 
   const onClockTeam = teams.length ? teams[expectedIndex] : null;
+  const onDeckTeam = teams.length ? teams[(expectedIndex + 1) % teams.length] : null;
+
+  const lastPick = useMemo(() => {
+    const src = picksForBoard.length ? picksForBoard : picksForSidebar;
+    if (!src.length) return null;
+    return src
+      .slice()
+      .sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0))
+      .at(-1) ?? null;
+  }, [picksForBoard, picksForSidebar]);
+
+  const pickLookup = useMemo(() => {
+    const map = new Map<string, DraftPick>();
+    for (const p of picksForBoard) {
+      map.set(`${p.round}:${p.team.id}`, p);
+    }
+    return map;
+  }, [picksForBoard]);
 
   const filteredRemaining = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -195,7 +296,7 @@ export default function LiveDraftPage() {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // NOT LIVE: countdown screen (make it feel like an event page)
+  // NOT LIVE: event countdown screen
   // ─────────────────────────────────────────────────────────────
   if (!isLive) {
     return (
@@ -244,105 +345,222 @@ export default function LiveDraftPage() {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // LIVE: dashboard
+  // LIVE: epic board
   // ─────────────────────────────────────────────────────────────
   return (
-    <div className="py-2">
-      {/* Header */}
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight">Live Draft Board</h1>
-            <div className="mt-1 text-sm text-muted-foreground">
-              {event?.name ?? "CYS Draft"} · Scheduled: {scheduledLabel}
+    <div className="py-3">
+      {/* HERO HEADER */}
+      <div
+        className={cx(
+          "rounded-3xl border p-5 sm:p-6 shadow-sm",
+          event?.isPaused ? "bg-amber-50/60 dark:bg-amber-950/20" : "bg-emerald-50/60 dark:bg-emerald-950/20"
+        )}
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">Live Draft Board</h1>
+              <div className="mt-1 text-sm text-muted-foreground">
+                {event?.name ?? "CYS Draft"} · Scheduled: {scheduledLabel}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>}
+                <Pill tone="neutral">Pick #{event?.currentPick ?? 1}</Pill>
+                <Pill tone="neutral">Drafted: {state?.counts?.drafted ?? 0}</Pill>
+                <Pill tone="neutral">Remaining: {state?.counts?.undrafted ?? remaining.length}</Pill>
+                {allPicks ? <Pill tone="neutral">Board: All picks</Pill> : <Pill tone="warn">Board: Recent picks only</Pill>}
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {event?.isPaused ? (
-              <Pill tone="warn">⏸ Paused</Pill>
-            ) : (
-              <Pill tone="good">● Live</Pill>
-            )}
-            <Pill tone="neutral">Pick #{event?.currentPick ?? 1}</Pill>
-          </div>
-        </div>
 
-        {/* Stat strip */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
-          <div className="rounded-2xl border bg-card p-4 shadow-sm">
-            <div className="text-xs text-muted-foreground">Drafted</div>
-            <div className="mt-1 text-2xl font-bold tabular-nums">{state?.counts?.drafted ?? 0}</div>
-          </div>
-          <div className="rounded-2xl border bg-card p-4 shadow-sm">
-            <div className="text-xs text-muted-foreground">Remaining</div>
-            <div className="mt-1 text-2xl font-bold tabular-nums">{state?.counts?.undrafted ?? remaining.length}</div>
-          </div>
-          <div className="rounded-2xl border bg-card p-4 shadow-sm">
-            <div className="text-xs text-muted-foreground">On the clock</div>
-            <div className="mt-1 text-sm font-semibold truncate">{onClockTeam?.name ?? "—"}</div>
-          </div>
-          <div className="rounded-2xl border bg-card p-4 shadow-sm">
-            <div className="text-xs text-muted-foreground">Pick clock</div>
-            <div className="mt-1 text-2xl font-bold tabular-nums">
-              {pad2(liveMin)}:{pad2(liveSec)}
+            <div className="flex flex-col sm:flex-row gap-3 sm:items-stretch">
+              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[240px]">
+                <div className="text-xs text-muted-foreground">Pick Clock</div>
+                <div className="mt-1 text-4xl font-bold tabular-nums tracking-tight">
+                  {pad2(liveMin)}:{pad2(liveSec)}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {event?.isPaused ? "Paused — clock held" : "Time remaining for current pick"}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[260px]">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Last Pick</div>
+                    <div className="mt-1 text-sm font-semibold truncate">{lastPick?.player.fullName ?? "—"}</div>
+                    <div className="text-xs text-muted-foreground truncate">{lastPick ? lastPick.team.name : "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">On Deck</div>
+                    <div className="mt-1 text-sm font-semibold truncate">{onDeckTeam?.name ?? "—"}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      After: {onClockTeam?.name ?? "—"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[260px]">
+                <div className="text-xs text-muted-foreground">On the Clock</div>
+                <div className="mt-1 text-xl font-semibold truncate">{onClockTeam?.name ?? "—"}</div>
+                <div className="mt-2 flex items-center gap-2">
+                  {!event?.isPaused ? <Pill tone="good">● Picking now</Pill> : <Pill tone="warn">⏸ Waiting</Pill>}
+                  <Pill tone="neutral">#{event?.currentPick ?? 1}</Pill>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="mt-6 grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* LEFT: clock + recent picks */}
-        <div className="xl:col-span-7 space-y-4">
-          {/* Clock hero */}
-          <div
-            className={cx(
-              "rounded-2xl border p-6 shadow-sm",
-              event?.isPaused
-                ? "bg-amber-50/60 dark:bg-amber-950/20"
-                : "bg-emerald-50/60 dark:bg-emerald-950/20"
-            )}
-          >
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <div className="text-sm text-muted-foreground">Pick Clock</div>
-                <div className="mt-1 text-6xl font-bold tabular-nums tracking-tight">
-                  {pad2(liveMin)}:{pad2(liveSec)}
+      {/* MAIN GRID */}
+      <div className="mt-5 grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {/* BOARD */}
+        <div className="xl:col-span-8">
+          <div className="rounded-3xl border bg-card shadow-sm overflow-hidden">
+            <div className="px-5 py-4 border-b">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <div className="text-sm font-semibold">Draft Board</div>
+                  <div className="text-xs text-muted-foreground">
+                    Rounds down the left · Coaches across the top · Scroll to see full history
+                  </div>
                 </div>
-                <div className="mt-2 text-sm text-muted-foreground">
-                  {event?.isPaused ? "Paused — clock held" : "Time remaining for the current pick"}
+                <div className="flex items-center gap-2">
+                  <Pill tone="neutral">{teams.length} teams</Pill>
+                  <Pill tone="neutral">{computedRoundsNeeded} rounds</Pill>
                 </div>
-              </div>
-
-              <div className="hidden sm:flex flex-col items-end gap-2">
-                <Pill tone={event?.isPaused ? "warn" : "good"}>
-                  {event?.isPaused ? "⏸ Paused" : "● Live"}
-                </Pill>
-                <div className="text-sm text-muted-foreground">Pick #{event?.currentPick ?? 1}</div>
               </div>
             </div>
-          </div>
 
+            {/* Horizontal + vertical scroll container */}
+            <div className="max-h-[72vh] overflow-auto">
+              <div className="min-w-[980px]">
+                {/* Header row */}
+                <div className="sticky top-0 z-20 grid"
+                     style={{ gridTemplateColumns: `90px repeat(${teamCount}, minmax(180px, 1fr))` }}>
+                  <div className="bg-muted/70 backdrop-blur border-b px-3 py-3 text-xs font-semibold sticky left-0 z-30">
+                    Round
+                  </div>
+                  {(teams.length ? teams : [{ id: "x", name: "Teams", order: 1 }]).map((t) => (
+                    <div key={t.id} className="bg-muted/70 backdrop-blur border-b px-3 py-3 text-xs font-semibold">
+                      <div className="truncate">{t.name}</div>
+                      <div className="text-[11px] text-muted-foreground font-normal">Pick Order #{t.order}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Rows */}
+                <div className="divide-y">
+                  {Array.from({ length: computedRoundsNeeded }).map((_, rIdx) => {
+                    const round = rIdx + 1;
+
+                    return (
+                      <div
+                        key={round}
+                        className="grid"
+                        style={{ gridTemplateColumns: `90px repeat(${teamCount}, minmax(180px, 1fr))` }}
+                      >
+                        {/* Round number (sticky) */}
+                        <div className="sticky left-0 z-10 bg-card px-3 py-3 text-sm font-semibold border-r">
+                          {round}
+                        </div>
+
+                        {(teams.length ? teams : [{ id: "x", name: "—", order: 1 }]).map((t, idx) => {
+                          const pick = teams.length ? pickLookup.get(`${round}:${t.id}`) ?? null : null;
+
+                          
+                          const curPickNum = event?.currentPick ?? 1;
+                          const expectedRound = Math.floor((curPickNum - 1) / Math.max(1, teams.length)) + 1;
+                          const isCurrentCell =
+                            !event?.isPaused &&
+                            teams.length > 0 &&
+                            round === expectedRound &&
+                            t.id === onClockTeam?.id;
+
+                          const isNextCell =
+                            teams.length > 0 &&
+                            round === expectedRound &&
+                            t.id === onDeckTeam?.id;
+
+                          return (
+                            <div
+                              key={`${round}-${t.id}-${idx}`}
+                              className={cx(
+                                "px-3 py-3",
+                                pick ? "bg-background" : "bg-background/50",
+                                isCurrentCell && "bg-emerald-50/80 dark:bg-emerald-950/25",
+                                isNextCell && "bg-amber-50/60 dark:bg-amber-950/20"
+                              )}
+                            >
+                              {pick ? (
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[11px] rounded-full border bg-muted px-2 py-0.5">
+                                      #{pick.overallNumber}
+                                    </span>
+                                    <span className="text-[11px] text-muted-foreground">
+                                      P{pick.pickInRound}
+                                    </span>
+                                  </div>
+                                  <div className="font-semibold leading-snug">
+                                    {pick.player.fullName}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {pick.player.rank != null ? `Rank ${pick.player.rank}` : ""}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="h-full flex items-center justify-between gap-2">
+                                  <div className="text-sm text-muted-foreground/70">
+                                    {isCurrentCell ? (
+                                      <span className="font-semibold text-emerald-700 dark:text-emerald-200">On the clock</span>
+                                    ) : isNextCell ? (
+                                      <span className="font-semibold text-amber-700 dark:text-amber-200">On deck</span>
+                                    ) : (
+                                      <span>—</span>
+                                    )}
+                                  </div>
+                                  {isCurrentCell ? <Pill tone="good">Pick now</Pill> : isNextCell ? <Pill tone="warn">Next</Pill> : null}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t text-xs text-muted-foreground">
+              Tip: this board becomes complete when you add <span className="font-semibold">/api/draft/picks</span> to return all picks.
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT RAIL */}
+        <div className="xl:col-span-4 space-y-4">
           {/* Recent picks */}
-          <div className="rounded-2xl border bg-card p-5 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
+          <div className="rounded-3xl border bg-card p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold">Recent Picks</div>
                 <div className="text-xs text-muted-foreground">Latest selections as they come in</div>
               </div>
-              <Pill tone="neutral">{picks.length} shown</Pill>
+              <Pill tone="neutral">{picksForSidebar.length} shown</Pill>
             </div>
 
             <div className="mt-3 divide-y">
-              {picks.length === 0 ? (
+              {picksForSidebar.length === 0 ? (
                 <div className="py-6 text-sm text-muted-foreground">No picks yet.</div>
               ) : (
-                picks.map((p) => (
+                picksForSidebar.map((p) => (
                   <div key={p.id} className="py-3 flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs rounded-full border bg-muted px-2 py-0.5">
-                          #{p.overallNumber}
-                        </span>
+                        <span className="text-xs rounded-full border bg-muted px-2 py-0.5">#{p.overallNumber}</span>
                         <div className="font-semibold truncate">{p.team.name}</div>
                       </div>
                       <div className="mt-1 text-sm text-muted-foreground truncate">
@@ -358,57 +576,9 @@ export default function LiveDraftPage() {
               )}
             </div>
           </div>
-        </div>
-
-        {/* RIGHT: remaining + team order */}
-        <div className="xl:col-span-5 space-y-4">
-          {/* On clock */}
-          <div className="rounded-2xl border bg-card p-5 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <div className="text-sm text-muted-foreground">On the clock</div>
-                <div className="mt-1 text-xl font-semibold">{onClockTeam?.name ?? "—"}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Next pick: <span className="font-semibold">#{event?.currentPick ?? 1}</span>
-                </div>
-              </div>
-              {!event?.isPaused ? <Pill tone="good">● Live</Pill> : <Pill tone="warn">⏸ Paused</Pill>}
-            </div>
-
-            <div className="mt-4">
-              <div className="text-sm font-semibold">Team Order</div>
-              <div className="mt-3 grid grid-cols-1 gap-2">
-                {teams.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No teams configured yet.</div>
-                ) : (
-                  teams.map((t, idx) => {
-                    const onClock = onClockTeam?.id === t.id && !event?.isPaused;
-                    return (
-                      <div
-                        key={t.id}
-                        className={cx(
-                          "rounded-xl border px-3 py-2 transition",
-                          onClock ? "bg-accent/60 border-accent shadow-sm" : "bg-background hover:bg-muted/50"
-                        )}
-                      >
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="font-semibold truncate">
-                              {t.order}. {t.name}
-                            </div>
-                          </div>
-                          {onClock ? <Pill tone="good">On the clock</Pill> : idx === expectedIndex ? <Pill tone="neutral">Up next</Pill> : null}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
 
           {/* Remaining players */}
-          <div className="rounded-2xl border bg-card p-5 shadow-sm">
+          <div className="rounded-3xl border bg-card p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold">Remaining Players</div>
@@ -421,31 +591,35 @@ export default function LiveDraftPage() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search…"
-                className="h-9 w-40 rounded-md border px-3 text-sm"
+                className="h-9 w-44 rounded-md border px-3 text-sm"
               />
             </div>
 
-            <div className="mt-3 rounded-xl border overflow-hidden">
+            <div className="mt-3 rounded-2xl border overflow-hidden">
               <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold sticky top-0">
-                <div className="col-span-9">Player</div>
-                <div className="col-span-3">Jersey</div>
+                <div className="col-span-8">Player</div>
+                <div className="col-span-4">Rating</div>
               </div>
 
               {filteredRemaining.length === 0 ? (
                 <div className="px-3 py-6 text-sm text-muted-foreground">No matches.</div>
               ) : (
-                <div className="divide-y max-h-[420px] overflow-auto">
+                <div className="divide-y max-h-[520px] overflow-auto">
                   {filteredRemaining.map((p) => (
-                    <div
-                      key={p.id}
-                      className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition"
-                    >
-                      <div className="col-span-9 font-semibold truncate">{p.fullName}</div>
-                      <div className="col-span-3 text-muted-foreground">{p.jerseySize ?? ""}</div>
+                    <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition">
+                      <div className="col-span-8 font-semibold truncate">{p.fullName}</div>
+                      <div className="col-span-4 flex items-center">
+                        <Stars value={p.rating} />
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="mt-3 text-xs text-muted-foreground">
+              If you want ratings to be exact, return <span className="font-semibold">rating (1–5)</span> from{" "}
+              <span className="font-semibold">/api/draft/players</span>.
             </div>
           </div>
         </div>

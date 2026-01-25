@@ -45,8 +45,7 @@ export default async function RootLayout({
 
           <footer className="mx-auto w-full max-w-6xl px-4 pb-10 text-xs text-muted-foreground">
             <div className="flex items-center justify-between">
-              <span>© {new Date().getFullYear()} CYS Draft Hub</span>
-              <span className="hidden sm:inline">Internal tool for draft night operations</span>
+              <span> {new Date().getFullYear()} CYS Draft Hub</span>
             </div>
           </footer>
         </div>

@@ -68,7 +68,6 @@ export default function HomePage() {
                     </h1>
 
                     <p className="mt-2 text-sm leading-6 text-white/80">
-                      Run the draft, track picks, and manage rosters—fast.
                     </p>
                   </div>
 
@@ -81,7 +80,7 @@ export default function HomePage() {
                     <ActionButton
                       href="/draft"
                       label="My Draft Board"
-                      sublabel="Your coach board (or choose a coach)"
+                      sublabel="Your coach board"
                     />
                     <ActionButton
                       href="/rosters"
@@ -96,7 +95,6 @@ export default function HomePage() {
                   </div>
 
                   <div className="mt-6 text-xs text-white/65">
-                    Tip: Keep this page open on a big screen for quick navigation.
                   </div>
                 </div>
               </div>
