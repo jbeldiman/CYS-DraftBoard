@@ -14,8 +14,8 @@ export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
     if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const body = await req.json().catch(() => ({}));
-    const coachIds = Array.isArray(body?.coachIds) ? body.coachIds.map(String) : [];
+    const body = (await req.json().catch(() => ({}))) as { coachIds?: unknown };
+    const coachIds: string[] = Array.isArray(body?.coachIds) ? (body.coachIds as unknown[]).map((v) => String(v)) : [];
 
     if (coachIds.length === 0) {
       return NextResponse.json({ error: "coachIds[] is required" }, { status: 400 });
@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     }
 
     await prisma.$transaction(
-      coachIds.map((id, idx) =>
+      coachIds.map((id: string, idx: number) =>
         prisma.user.update({
           where: { id },
           data: { coachOrder: idx + 1 },
