@@ -16,19 +16,12 @@ function norm(v: string | null | undefined) {
   return (v ?? "").trim().toLowerCase();
 }
 
-function digitsOnly(v: string) {
-  return v.replace(/[^\d]/g, "");
-}
-
-function makeGroupKey(p: { primaryEmail: string | null; primaryPhone: string | null; guardian1Name: string | null }) {
-  const email = norm(p.primaryEmail);
-  if (email) return `email:${email}`;
-
-  const phone = digitsOnly(norm(p.primaryPhone));
-  if (phone) return `phone:${phone}`;
-
+function makeGroupKey(p: { guardian1Name: string | null; primaryEmail: string | null }) {
   const enroller = norm(p.guardian1Name);
   if (enroller) return `enroller:${enroller}`;
+
+  const email = norm(p.primaryEmail);
+  if (email) return `email:${email}`;
 
   return "";
 }
@@ -36,46 +29,32 @@ function makeGroupKey(p: { primaryEmail: string | null; primaryPhone: string | n
 export async function GET() {
   const draftEventId = await latestEventId();
 
-  const players = await prisma.draftPlayer.findMany({
-    where: { draftEventId },
+  const eligiblePlayers = await prisma.draftPlayer.findMany({
+    where: { draftEventId, isDraftEligible: true },
     select: {
       id: true,
       firstName: true,
       lastName: true,
       fullName: true,
-      primaryEmail: true,
-      primaryPhone: true,
       guardian1Name: true,
-      isDraftEligible: true,
-      wantsU13: true,
+      primaryEmail: true,
     },
   });
 
-  const groups: Record<string, typeof players> = {};
+  const buckets: Record<string, typeof eligiblePlayers> = {};
 
-  for (const p of players) {
+  for (const p of eligiblePlayers) {
     const key = makeGroupKey(p);
     if (!key) continue;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(p);
+    if (!buckets[key]) buckets[key] = [];
+    buckets[key].push(p);
   }
 
-  const siblingGroups = Object.entries(groups)
-    .map(([groupKey, kids]) => {
-      const u13Eligible = kids.filter((k) => k.wantsU13 && k.isDraftEligible);
-      return { groupKey, kids, u13EligibleCount: u13Eligible.length };
-    })
-    .filter((g) => g.u13EligibleCount >= 2)
-    .map(({ groupKey, kids }) => ({
+  const groupsRaw = Object.entries(buckets)
+    .filter(([, kids]) => kids.length > 1)
+    .map(([groupKey, kids]) => ({
       groupKey,
-      players: [...kids, ...kids].map((k) => ({
-        id: k.id,
-        firstName: k.firstName,
-        lastName: k.lastName,
-        fullName: k.fullName,
-        primaryEmail: k.primaryEmail,
-        primaryPhone: k.primaryPhone,
-      })),
+      kids,
     }));
 
   const costs = await prisma.siblingDraftCost.findMany({
@@ -84,12 +63,26 @@ export async function GET() {
 
   const costByKey = Object.fromEntries(costs.map((c) => [c.groupKey, c.draftCost]));
 
+  const groups = groupsRaw.map((g) => ({
+    groupKey: g.groupKey,
+    draftCost: costByKey[g.groupKey] ?? null,
+    players: [...g.kids, ...g.kids].map((k) => ({
+      id: k.id,
+      firstName: k.firstName,
+      lastName: k.lastName,
+      fullName: k.fullName,
+      primaryEmail: k.primaryEmail,
+      primaryPhone: null,
+    })),
+  }));
+
   return NextResponse.json({
     draftEventId,
-    groups: siblingGroups.map((g) => ({
-      groupKey: g.groupKey,
-      draftCost: costByKey[g.groupKey] ?? null,
-      players: g.players,
-    })),
+    debug: {
+      eligibleCount: eligiblePlayers.length,
+      uniqueGroupKeys: Object.keys(buckets).length,
+      siblingGroupsFound: groups.length,
+    },
+    groups,
   });
 }
