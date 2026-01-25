@@ -122,6 +122,14 @@ function jerseyFromRow(row: Record<string, string>): string | null {
 
 function primaryPhoneFromRow(row: Record<string, string>): string | null {
   const keys = [
+    "Guardian 1 Mobile Phone Number",
+    "Guardian 1 Mobile Phone",
+    "Guardian 1 Phone",
+    "Guardian 1 Phone Number",
+    "Parent 1 Mobile Phone Number",
+    "Parent 1 Phone",
+    "Parent Phone",
+    "Parent phone",
     "Primary Phone",
     "Primary phone",
     "Phone",
@@ -129,8 +137,6 @@ function primaryPhoneFromRow(row: Record<string, string>): string | null {
     "Mobile phone",
     "Guardian Phone",
     "Guardian phone",
-    "Parent Phone",
-    "Parent phone",
   ];
   for (const k of keys) {
     const v = norm(row[k]);
@@ -141,19 +147,68 @@ function primaryPhoneFromRow(row: Record<string, string>): string | null {
 
 function primaryEmailFromRow(row: Record<string, string>): string | null {
   const keys = [
+    "Guardian 1 Email Address",
+    "Guardian 1 Email",
+    "Guardian Email Address",
+    "Guardian Email",
+    "Parent 1 Email Address",
+    "Parent 1 Email",
+    "Parent Email",
+    "Parent email",
     "Primary Email",
     "Primary email",
     "Email",
-    "Guardian Email",
-    "Guardian email",
-    "Parent Email",
-    "Parent email",
+    "Email Address",
   ];
   for (const k of keys) {
     const v = norm(row[k]);
     if (v) return v;
   }
   return null;
+}
+
+function guardianNameFromRow(row: Record<string, string>, which: 1 | 2): string | null {
+  const directKeys =
+    which === 1
+      ? ["Parent 1 Name", "Guardian 1 Name", "Primary Guardian Name", "Primary Parent Name"]
+      : ["Parent 2 Name", "Guardian 2 Name", "Secondary Guardian Name", "Secondary Parent Name"];
+
+  for (const k of directKeys) {
+    const v = norm(row[k]);
+    if (v) return v;
+  }
+
+  const firstKeys =
+    which === 1
+      ? ["Guardian 1 First Name", "Parent 1 First Name", "Primary Guardian First Name", "Primary Parent First Name"]
+      : ["Guardian 2 First Name", "Parent 2 First Name", "Secondary Guardian First Name", "Secondary Parent First Name"];
+
+  const lastKeys =
+    which === 1
+      ? ["Guardian 1 Last Name", "Parent 1 Last Name", "Primary Guardian Last Name", "Primary Parent Last Name"]
+      : ["Guardian 2 Last Name", "Parent 2 Last Name", "Secondary Guardian Last Name", "Secondary Parent Last Name"];
+
+  let first = "";
+  let last = "";
+
+  for (const k of firstKeys) {
+    const v = norm(row[k]);
+    if (v) {
+      first = v;
+      break;
+    }
+  }
+
+  for (const k of lastKeys) {
+    const v = norm(row[k]);
+    if (v) {
+      last = v;
+      break;
+    }
+  }
+
+  const joined = `${first} ${last}`.trim();
+  return joined ? joined : null;
 }
 
 function parseDateOnlyToUTCNoon(raw: unknown): Date | null {
@@ -260,7 +315,11 @@ export async function POST(req: Request) {
       total += 1;
 
       const registrationId =
-        norm(o["Registration ID"]) || norm(o["Registration Id"]) || norm(o["RegistrationID"]) || norm(o["Registration"]) || null;
+        norm(o["Registration ID"]) ||
+        norm(o["Registration Id"]) ||
+        norm(o["RegistrationID"]) ||
+        norm(o["Registration"]) ||
+        null;
 
       const firstName = norm(o["First Name"]) || norm(o["Player First Name"]) || norm(o["Participant First Name"]);
       const lastName = norm(o["Last Name"]) || norm(o["Player Last Name"]) || norm(o["Participant Last Name"]);
@@ -286,22 +345,11 @@ export async function POST(req: Request) {
       const wantsU13 = wantsU13FromRow(o);
       const jerseySize = jerseyFromRow(o);
 
-      const guardian1Name =
-        norm(o["Parent 1 Name"]) ||
-        norm(o["Guardian 1 Name"]) ||
-        norm(o["Primary Guardian Name"]) ||
-        norm(o["Primary Parent Name"]) ||
-        null;
+      const guardian1Name = guardianNameFromRow(o, 1);
+      const guardian2Name = guardianNameFromRow(o, 2);
 
-      const guardian2Name =
-        norm(o["Parent 2 Name"]) ||
-        norm(o["Guardian 2 Name"]) ||
-        norm(o["Secondary Guardian Name"]) ||
-        norm(o["Secondary Parent Name"]) ||
-        null;
-
-      const primaryPhone = primaryPhoneFromRow(o);
       const primaryEmail = primaryEmailFromRow(o);
+      const primaryPhone = primaryPhoneFromRow(o);
 
       const eligibleDob = !!dob && dob.getTime() >= DOB_MIN.getTime() && dob.getTime() <= DOB_MAX.getTime();
       const isDraftEligible = eligibleDob && wantsU13;
