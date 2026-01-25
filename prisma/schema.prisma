@@ -181,7 +181,8 @@ model DraftPlayer {
   draftedAt     DateTime?
 
   picks         DraftPick[]
-
+  siblingDraftCosts SiblingDraftCost[]
+  
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
@@ -213,15 +214,21 @@ model DraftPick {
 
 model SiblingDraftCost {
   id           String     @id @default(cuid())
+
   draftEventId String
   draftEvent   DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
 
+  playerId     String
+  player       DraftPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
   groupKey     String
+
   draftCost    Int?
 
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  @@unique([draftEventId, groupKey])
+  @@unique([draftEventId, playerId])
+  @@index([draftEventId, groupKey])
   @@index([draftEventId])
 }
