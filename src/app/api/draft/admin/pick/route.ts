@@ -11,7 +11,7 @@ function isAdmin(session: any) {
 
 function snakeSlot(round: number, teamIndex: number, teamCount: number) {
   const reverse = round % 2 === 0;
-  const posInRound = reverse ? teamCount - 1 - teamIndex : teamIndex; 
+  const posInRound = reverse ? teamCount - 1 - teamIndex : teamIndex;
   const pickInRound = posInRound + 1;
   const overallNumber = (round - 1) * teamCount + posInRound + 1;
   return { pickInRound, overallNumber };
@@ -68,15 +68,33 @@ export async function POST(req: Request) {
     if (!player.isDraftEligible) return NextResponse.json({ error: "Player is not draft-eligible" }, { status: 400 });
     if (player.isDrafted) return NextResponse.json({ error: "Player already drafted" }, { status: 409 });
 
-    const slotExisting = await prisma.draftPick.findFirst({
-      where: { draftEventId: event.id, teamId, round },
-      select: { id: true },
-    });
-    if (slotExisting) {
-      return NextResponse.json({ error: "That team already has a pick in this round" }, { status: 409 });
-    }
-
     const created = await prisma.$transaction(async (tx) => {
+      const slotExisting = await tx.draftPick.findFirst({
+        where: { draftEventId: event.id, teamId, round, pickInRound },
+        select: { id: true },
+      });
+      if (slotExisting) {
+        throw new Error("That pick slot is already filled");
+      }
+
+      const overallExisting = await tx.draftPick.findFirst({
+        where: { draftEventId: event.id, overallNumber },
+        select: { id: true },
+      });
+      if (overallExisting) {
+        throw new Error("That overall pick is already filled");
+      }
+
+      const playerExisting = await tx.draftPick.findFirst({
+        where: { draftEventId: event.id, playerId },
+        select: { id: true },
+      });
+      if (playerExisting) {
+        throw new Error("That player has already been drafted");
+      }
+
+      const now = new Date();
+
       const pick = await tx.draftPick.create({
         data: {
           draftEventId: event.id,
@@ -85,9 +103,9 @@ export async function POST(req: Request) {
           round,
           pickInRound,
           overallNumber,
-          madeAt: new Date(),
+          madeAt: now,
         },
-        select: { id: true },
+        select: { id: true, overallNumber: true },
       });
 
       await tx.draftPlayer.update({
@@ -95,15 +113,47 @@ export async function POST(req: Request) {
         data: {
           isDrafted: true,
           draftedTeamId: teamId,
-          draftedAt: new Date(),
+          draftedAt: now,
         },
       });
+
+      if (event.phase === "LIVE" && (event.currentPick ?? 1) === overallNumber) {
+        let nextPick = overallNumber + 1;
+
+        while (true) {
+          const exists = await tx.draftPick.findFirst({
+            where: { draftEventId: event.id, overallNumber: nextPick },
+            select: { id: true },
+          });
+          if (!exists) break;
+          nextPick += 1;
+        }
+
+        if (!event.isPaused) {
+          const endsAt = new Date(now.getTime() + (event.pickClockSeconds ?? 120) * 1000);
+          await tx.draftEvent.update({
+            where: { id: event.id },
+            data: { currentPick: nextPick, clockEndsAt: endsAt },
+          });
+        } else {
+          await tx.draftEvent.update({
+            where: { id: event.id },
+            data: { currentPick: nextPick },
+          });
+        }
+      }
 
       return pick;
     });
 
     return NextResponse.json({ ok: true, id: created.id });
-  } catch (e) {
+  } catch (e: any) {
+    const msg = String(e?.message ?? "Failed to create pick");
+
+    if (msg.includes("already filled") || msg.includes("already been drafted")) {
+      return NextResponse.json({ error: msg }, { status: 409 });
+    }
+
     console.error(e);
     return NextResponse.json({ error: "Failed to create pick" }, { status: 500 });
   }

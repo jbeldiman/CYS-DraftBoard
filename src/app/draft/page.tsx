@@ -5,9 +5,35 @@ import React, { useEffect, useMemo, useState } from "react";
 function pad2(n: number) {
   return n.toString().padStart(2, "0");
 }
-
 function cx(...v: Array<string | false | null | undefined>) {
   return v.filter(Boolean).join(" ");
+}
+
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function Stars({ value }: { value: number | null }) {
+  const v = value == null ? 0 : clamp(Math.round(value), 0, 5);
+  return (
+    <div
+      className="flex items-center gap-0.5"
+      aria-label={value == null ? "No rating" : `${v} out of 5`}
+      title={value == null ? "No rating" : `${v} / 5`}
+    >
+      {Array.from({ length: 5 }).map((_, i) => (
+        <span
+          key={i}
+          className={cx(
+            "text-base leading-none",
+            i < v ? "text-amber-500" : "text-muted-foreground/40"
+          )}
+        >
+          ★
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function Pill({
@@ -35,6 +61,17 @@ function Pill({
   );
 }
 
+/** --- Types pulled from your existing pages --- */
+type DraftPick = {
+  id: string;
+  overallNumber: number;
+  round: number;
+  pickInRound: number;
+  madeAt: string;
+  team: { id: string; name: string; order: number };
+  player: { id: string; fullName: string; rank: number | null };
+};
+
 type DraftState = {
   event: {
     id: string;
@@ -56,45 +93,56 @@ type DraftState = {
   counts: { undrafted: number; drafted: number };
 };
 
-type DraftPick = {
-  id: string;
-  overallNumber: number;
-  round: number;
-  pickInRound: number;
-  madeAt: string;
-  team: { id: string; name: string; order: number };
-  player: { id: string; fullName: string; rank: number | null };
-};
-
 type RemainingPlayer = {
   id: string;
   fullName: string;
-  rating: number | null; 
+  rating: number | null;
 };
 
-const DEFAULT_ROUNDS = 16; 
+type DraftBoardEntry = {
+  playerId: string;
+  addedAt: number;
+};
 
-function clamp(n: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, n));
+const DRAFT_BOARD_KEY = "cys.draftBoard.v1";
+const MY_TEAM_ID_KEY = "cys.myTeamId.v1";
+
+function safeReadJSON<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+function safeWriteJSON(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+   
+  }
 }
 
-function Stars({ value }: { value: number | null }) {
-  const v = value == null ? 0 : clamp(Math.round(value), 0, 5);
-  return (
-    <div className="flex items-center gap-0.5" aria-label={value == null ? "No rating" : `${v} out of 5`}>
-      {Array.from({ length: 5 }).map((_, i) => (
-        <span key={i} className={cx("text-base leading-none", i < v ? "text-amber-500" : "text-muted-foreground/40")}>
-          ★
-        </span>
-      ))}
-    </div>
+function snakeTeamIndexFromOverallPick(overallPick1: number, teamCount: number) {
+  if (teamCount <= 0) return { round: 1, index: 0 };
+  const p0 = overallPick1 - 1;
+  const round = Math.floor(p0 / teamCount) + 1;
+  const posInRound = p0 % teamCount;
+
+  const isReverse = round % 2 === 0;
+  const index = isReverse ? teamCount - 1 - posInRound : posInRound;
+
+  return { round, index, posInRound };
+}
+
+export default function DraftPage() {
+  const fallbackScheduledTarget = useMemo(
+    () => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
+    []
   );
-}
 
-export default function LiveDraftPage() {
-  const fallbackScheduledTarget = useMemo(() => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)), []);
   const [now, setNow] = useState(() => new Date());
-
   const [state, setState] = useState<DraftState | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -103,10 +151,54 @@ export default function LiveDraftPage() {
 
   const [allPicks, setAllPicks] = useState<DraftPick[] | null>(null);
 
+  const [draftBoard, setDraftBoard] = useState<DraftBoardEntry[]>([]);
+  const [draftErr, setDraftErr] = useState<string | null>(null);
+  const [draftBusy, setDraftBusy] = useState<string | null>(null);
+
+
+  const [myTeamId, setMyTeamId] = useState<string | null>(null);
+
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+
+    try {
+      const url = new URL(window.location.href);
+      const tid = url.searchParams.get("teamId");
+      if (tid) {
+        setMyTeamId(tid);
+        safeWriteJSON(MY_TEAM_ID_KEY, tid);
+        return;
+      }
+    } catch {
+
+    }
+
+    try {
+      const tid = localStorage.getItem(MY_TEAM_ID_KEY);
+      if (tid) setMyTeamId(tid);
+    } catch {
+
+    }
+  }, []);
+
+  useEffect(() => {
+
+    try {
+      const entries = safeReadJSON<DraftBoardEntry[]>(DRAFT_BOARD_KEY, []);
+      setDraftBoard(Array.isArray(entries) ? entries : []);
+    } catch {
+      setDraftBoard([]);
+    }
+  }, []);
+
+  function persistDraftBoard(next: DraftBoardEntry[]) {
+    setDraftBoard(next);
+    safeWriteJSON(DRAFT_BOARD_KEY, next);
+  }
 
   async function loadState() {
     try {
@@ -120,7 +212,6 @@ export default function LiveDraftPage() {
     }
   }
 
-
   async function loadAllPicksOptional() {
     try {
       const res = await fetch("/api/draft/picks", { cache: "no-store" });
@@ -129,38 +220,34 @@ export default function LiveDraftPage() {
       const picks = (json.picks ?? []) as DraftPick[];
       if (Array.isArray(picks) && picks.length) setAllPicks(picks);
     } catch {
-      
+
     }
   }
 
   async function loadRemaining() {
     try {
-      const res = await fetch("/api/draft/players?eligible=true&drafted=false", { cache: "no-store" });
+      const res = await fetch("/api/draft/players?eligible=true&drafted=false", {
+        cache: "no-store",
+      });
       const json = await res.json().catch(() => ({}));
-
 
       setRemaining(
         (json.players ?? []).map((p: any) => {
-          const rawRating =
-            p.rating ??
-            p.boardRating ??
-            p.playerRating ??
-            null;
-
+          const rawRating = p.rating ?? p.boardRating ?? p.playerRating ?? null;
           const rank = p.rank ?? p.playerRank ?? null;
 
           const ratingFromRank =
             rank == null
               ? null
               : rank <= 10
-                ? 5
-                : rank <= 20
-                  ? 4
-                  : rank <= 30
-                    ? 3
-                    : rank <= 40
-                      ? 2
-                      : 1;
+              ? 5
+              : rank <= 20
+              ? 4
+              : rank <= 30
+              ? 3
+              : rank <= 40
+              ? 2
+              : 1;
 
           return {
             id: p.id,
@@ -188,7 +275,19 @@ export default function LiveDraftPage() {
     return () => clearInterval(t);
   }, []);
 
+  useEffect(() => {
+    const remainingIds = new Set(remaining.map((p) => p.id));
+    const pruned = draftBoard.filter((e) => remainingIds.has(e.playerId));
+    if (pruned.length !== draftBoard.length) {
+      persistDraftBoard(pruned);
+    }
+
+  }, [remaining]);
+
   const event = state?.event ?? null;
+  const teams = state?.teams ?? [];
+  const teamCount = teams.length;
+
   const isLive = event?.phase === "LIVE";
 
   const scheduledTarget = useMemo(() => {
@@ -224,17 +323,11 @@ export default function LiveDraftPage() {
 
   const liveClock = useMemo(() => {
     if (!event) return { remaining: null as number | null };
-
-    if (event.isPaused) {
-      const remaining = event.pauseRemainingSecs ?? event.pickClockSeconds;
-      return { remaining };
-    }
-
+    if (event.isPaused) return { remaining: event.pauseRemainingSecs ?? event.pickClockSeconds };
     if (!event.clockEndsAt) return { remaining: null };
-
     const endsAt = new Date(event.clockEndsAt);
-    const remaining = Math.max(0, Math.ceil((endsAt.getTime() - now.getTime()) / 1000));
-    return { remaining };
+    const remainingSecs = Math.max(0, Math.ceil((endsAt.getTime() - now.getTime()) / 1000));
+    return { remaining: remainingSecs };
   }, [event, now]);
 
   const liveRemaining = liveClock.remaining;
@@ -242,49 +335,117 @@ export default function LiveDraftPage() {
   const liveMin = Math.floor(liveTotalSeconds / 60);
   const liveSec = liveTotalSeconds % 60;
 
-  const teams = state?.teams ?? [];
-  const picksForSidebar = state?.recentPicks ?? [];
-
-
-  const picksForBoard = (allPicks && allPicks.length ? allPicks : state?.recentPicks ?? []).slice();
-
-
-  const teamCount = Math.max(teams.length, 1);
-
-  const maxRoundSeen = picksForBoard.reduce((m, p) => Math.max(m, p.round), 1);
-  const computedRoundsNeeded = Math.max(DEFAULT_ROUNDS, maxRoundSeen);
-
-  const expectedIndex = useMemo(() => {
-    const cur = event?.currentPick ?? 1;
-    const len = Math.max(1, teams.length);
-    return (cur - 1) % len;
-  }, [event?.currentPick, teams.length]);
-
-  const onClockTeam = teams.length ? teams[expectedIndex] : null;
-  const onDeckTeam = teams.length ? teams[(expectedIndex + 1) % teams.length] : null;
+  const picksForBoard = useMemo(() => {
+    const src = (allPicks && allPicks.length ? allPicks : state?.recentPicks ?? []).slice();
+    return src;
+  }, [allPicks, state?.recentPicks]);
 
   const lastPick = useMemo(() => {
-    const src = picksForBoard.length ? picksForBoard : picksForSidebar;
+    const src = picksForBoard.length ? picksForBoard : state?.recentPicks ?? [];
     if (!src.length) return null;
-    return src
-      .slice()
-      .sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0))
-      .at(-1) ?? null;
-  }, [picksForBoard, picksForSidebar]);
+    return src.slice().sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0)).at(-1) ?? null;
+  }, [picksForBoard, state?.recentPicks]);
 
-  const pickLookup = useMemo(() => {
-    const map = new Map<string, DraftPick>();
-    for (const p of picksForBoard) {
-      map.set(`${p.round}:${p.team.id}`, p);
-    }
-    return map;
-  }, [picksForBoard]);
+  const onClockTeam = useMemo(() => {
+    const cur = event?.currentPick ?? 1;
+    if (!teamCount) return null;
+    const { index } = snakeTeamIndexFromOverallPick(cur, teamCount);
+    return teams[index] ?? null;
+  }, [event?.currentPick, teamCount, teams]);
+
+  const onDeckTeam = useMemo(() => {
+    const cur = (event?.currentPick ?? 1) + 1;
+    if (!teamCount) return null;
+    const { index } = snakeTeamIndexFromOverallPick(cur, teamCount);
+    return teams[index] ?? null;
+  }, [event?.currentPick, teamCount, teams]);
+
+  const isMyTurn = useMemo(() => {
+    if (!isLive) return false;
+    if (!myTeamId) return false;
+    return onClockTeam?.id === myTeamId && !event?.isPaused;
+  }, [isLive, myTeamId, onClockTeam?.id, event?.isPaused]);
 
   const filteredRemaining = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return remaining;
     return remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s));
   }, [remaining, q]);
+
+  const remainingById = useMemo(() => {
+    const map = new Map<string, RemainingPlayer>();
+    for (const p of remaining) map.set(p.id, p);
+    return map;
+  }, [remaining]);
+
+  const draftBoardPlayers = useMemo(() => {
+    return draftBoard
+      .slice()
+      .sort((a, b) => (a.addedAt ?? 0) - (b.addedAt ?? 0))
+      .map((e) => remainingById.get(e.playerId))
+      .filter(Boolean) as RemainingPlayer[];
+  }, [draftBoard, remainingById]);
+
+  const myRoster = useMemo(() => {
+    if (!myTeamId) return [] as DraftPick[];
+    const src = picksForBoard.length ? picksForBoard : state?.recentPicks ?? [];
+    return src
+      .filter((p) => p.team?.id === myTeamId)
+      .slice()
+      .sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0));
+  }, [myTeamId, picksForBoard, state?.recentPicks]);
+
+  function isOnDraftBoard(playerId: string) {
+    return draftBoard.some((e) => e.playerId === playerId);
+  }
+
+  function addToDraftBoard(playerId: string) {
+    if (isOnDraftBoard(playerId)) return;
+    const next = [...draftBoard, { playerId, addedAt: Date.now() }];
+    persistDraftBoard(next);
+  }
+
+  function removeFromDraftBoard(playerId: string) {
+    const next = draftBoard.filter((e) => e.playerId !== playerId);
+    persistDraftBoard(next);
+  }
+
+  function clearDraftBoard() {
+    persistDraftBoard([]);
+  }
+
+  async function coachDraftPlayer(playerId: string) {
+    setDraftErr(null);
+    setDraftBusy(playerId);
+
+    try {
+      const res = await fetch("/api/draft/pick", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ playerId }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const msg =
+          j?.error ??
+          (res.status === 404
+            ? "Missing endpoint: POST /api/draft/pick"
+            : "Failed to draft player");
+        throw new Error(msg);
+      }
+
+    
+      await loadState();
+      await loadAllPicksOptional();
+      await loadRemaining();
+      removeFromDraftBoard(playerId);
+    } catch (e: any) {
+      setDraftErr(e?.message ?? "Failed to draft player");
+    } finally {
+      setDraftBusy(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -295,330 +456,341 @@ export default function LiveDraftPage() {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────
-  // NOT LIVE: event countdown screen
-  // ─────────────────────────────────────────────────────────────
-  if (!isLive) {
-    return (
-      <div className="py-6">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-4">
-            <h1 className="text-3xl font-semibold tracking-tight">Live Draft</h1>
-            <Pill tone="neutral">Status: {event?.phase ?? "SETUP"}</Pill>
-          </div>
-          <p className="text-sm text-muted-foreground">Countdown to {scheduledLabel}</p>
-        </div>
-
-        <div className="mt-8 grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="rounded-2xl border bg-card p-6 text-center shadow-sm">
-            <div className="text-4xl font-bold tabular-nums">{scheduledDays}</div>
-            <div className="mt-1 text-sm text-muted-foreground">Days</div>
-          </div>
-          <div className="rounded-2xl border bg-card p-6 text-center shadow-sm">
-            <div className="text-4xl font-bold tabular-nums">{pad2(scheduledHours)}</div>
-            <div className="mt-1 text-sm text-muted-foreground">Hours</div>
-          </div>
-          <div className="rounded-2xl border bg-card p-6 text-center shadow-sm">
-            <div className="text-4xl font-bold tabular-nums">{pad2(scheduledMinutes)}</div>
-            <div className="mt-1 text-sm text-muted-foreground">Minutes</div>
-          </div>
-          <div className="rounded-2xl border bg-card p-6 text-center shadow-sm">
-            <div className="text-4xl font-bold tabular-nums">{pad2(scheduledSeconds)}</div>
-            <div className="mt-1 text-sm text-muted-foreground">Seconds</div>
-          </div>
-        </div>
-
-        <div className="mt-6 rounded-2xl border bg-card p-5 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div>
-              <div className="text-sm text-muted-foreground">Draft Event</div>
-              <div className="mt-1 font-semibold">{event?.name ?? "CYS Draft"}</div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Pill tone="neutral">Remaining: {state?.counts?.undrafted ?? 0}</Pill>
-              <Pill tone="neutral">Drafted: {state?.counts?.drafted ?? 0}</Pill>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // LIVE: epic board
-  // ─────────────────────────────────────────────────────────────
   return (
-    <div className="py-3">
-      {/* HERO HEADER */}
+    <div className="py-4 space-y-4">
+      {/* TOP STRIP: Countdown (small) OR Live status panel */}
       <div
         className={cx(
-          "rounded-3xl border p-5 sm:p-6 shadow-sm",
-          event?.isPaused ? "bg-amber-50/60 dark:bg-amber-950/20" : "bg-emerald-50/60 dark:bg-emerald-950/20"
+          "rounded-3xl border p-4 shadow-sm",
+          isLive
+            ? event?.isPaused
+              ? "bg-amber-50/60 dark:bg-amber-950/20"
+              : "bg-emerald-50/60 dark:bg-emerald-950/20"
+            : "bg-card"
         )}
       >
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
-            <div className="min-w-0">
-              <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">Live Draft Board</h1>
-              <div className="mt-1 text-sm text-muted-foreground">
-                {event?.name ?? "CYS Draft"} · Scheduled: {scheduledLabel}
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                {event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>}
-                <Pill tone="neutral">Pick #{event?.currentPick ?? 1}</Pill>
-                <Pill tone="neutral">Drafted: {state?.counts?.drafted ?? 0}</Pill>
-                <Pill tone="neutral">Remaining: {state?.counts?.undrafted ?? remaining.length}</Pill>
-                {allPicks ? <Pill tone="neutral">Board: All picks</Pill> : <Pill tone="warn">Board: Recent picks only</Pill>}
-              </div>
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {isLive ? "Draft Room" : "Draft Countdown"}
+              </h1>
+              <Pill tone="neutral">Status: {event?.phase ?? "SETUP"}</Pill>
+              {isLive ? (
+                event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>
+              ) : (
+                <Pill tone="neutral">Starts: {scheduledLabel}</Pill>
+              )}
+              {myTeamId ? (
+                <Pill tone="neutral">My TeamId: {myTeamId}</Pill>
+              ) : (
+                <Pill tone="warn">Tip: add ?teamId=YOUR_TEAM_ID</Pill>
+              )}
+              {isLive && isMyTurn ? <Pill tone="good">It’s your turn</Pill> : null}
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 sm:items-stretch">
-              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[240px]">
-                <div className="text-xs text-muted-foreground">Pick Clock</div>
-                <div className="mt-1 text-4xl font-bold tabular-nums tracking-tight">
+            <div className="mt-1 text-sm text-muted-foreground">
+              {event?.name ?? "CYS Draft"} · Remaining: {state?.counts?.undrafted ?? remaining.length} · Drafted:{" "}
+              {state?.counts?.drafted ?? 0}
+            </div>
+          </div>
+
+          {/* Countdown / Live panel */}
+          {!isLive ? (
+            <div className="flex items-center gap-3">
+              <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
+                <div className="text-[11px] text-muted-foreground">Days</div>
+                <div className="text-xl font-bold tabular-nums">{scheduledDays}</div>
+              </div>
+              <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
+                <div className="text-[11px] text-muted-foreground">Time</div>
+                <div className="text-xl font-bold tabular-nums">
+                  {pad2(scheduledHours)}:{pad2(scheduledMinutes)}:{pad2(scheduledSeconds)}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
+                <div className="text-[11px] text-muted-foreground">Current Pick</div>
+                <div className="text-lg font-semibold tabular-nums">#{event?.currentPick ?? 1}</div>
+                <div className="text-xs text-muted-foreground truncate">{onClockTeam?.name ?? "—"}</div>
+              </div>
+
+              <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
+                <div className="text-[11px] text-muted-foreground">On Deck</div>
+                <div className="text-lg font-semibold truncate">{onDeckTeam?.name ?? "—"}</div>
+                <div className="text-xs text-muted-foreground">Next up</div>
+              </div>
+
+              <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
+                <div className="text-[11px] text-muted-foreground">Timer</div>
+                <div className="text-lg font-bold tabular-nums">
                   {pad2(liveMin)}:{pad2(liveSec)}
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {event?.isPaused ? "Paused — clock held" : "Time remaining for current pick"}
+                <div className="text-xs text-muted-foreground">
+                  {event?.isPaused ? "Paused" : "Time left"}
                 </div>
               </div>
 
-              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[260px]">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <div className="text-xs text-muted-foreground">Last Pick</div>
-                    <div className="mt-1 text-sm font-semibold truncate">{lastPick?.player.fullName ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground truncate">{lastPick ? lastPick.team.name : "—"}</div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-muted-foreground">On Deck</div>
-                    <div className="mt-1 text-sm font-semibold truncate">{onDeckTeam?.name ?? "—"}</div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      After: {onClockTeam?.name ?? "—"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[260px]">
-                <div className="text-xs text-muted-foreground">On the Clock</div>
-                <div className="mt-1 text-xl font-semibold truncate">{onClockTeam?.name ?? "—"}</div>
-                <div className="mt-2 flex items-center gap-2">
-                  {!event?.isPaused ? <Pill tone="good">● Picking now</Pill> : <Pill tone="warn">⏸ Waiting</Pill>}
-                  <Pill tone="neutral">#{event?.currentPick ?? 1}</Pill>
+              <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
+                <div className="text-[11px] text-muted-foreground">Last Pick</div>
+                <div className="text-sm font-semibold truncate">{lastPick?.player.fullName ?? "—"}</div>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <span className="text-xs text-muted-foreground truncate">{lastPick?.team?.name ?? "—"}</span>
+                  <Stars
+                    value={
+                      lastPick?.player?.rank == null
+                        ? null
+                        : lastPick.player.rank <= 10
+                        ? 5
+                        : lastPick.player.rank <= 20
+                        ? 4
+                        : lastPick.player.rank <= 30
+                        ? 3
+                        : lastPick.player.rank <= 40
+                        ? 2
+                        : 1
+                    }
+                  />
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
+
+        {draftErr ? <div className="mt-3 text-sm text-rose-600">{draftErr}</div> : null}
       </div>
 
-      {/* MAIN GRID */}
-      <div className="mt-5 grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* BOARD */}
-        <div className="xl:col-span-8">
-          <div className="rounded-3xl border bg-card shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                <div>
-                  <div className="text-sm font-semibold">Draft Board</div>
-                  <div className="text-xs text-muted-foreground">
-                    Rounds down the left · Coaches across the top · Scroll to see full history
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Pill tone="neutral">{teams.length} teams</Pill>
-                  <Pill tone="neutral">{computedRoundsNeeded} rounds</Pill>
-                </div>
-              </div>
+      {/* My Roster (always visible) */}
+      <div className="rounded-3xl border bg-card p-4 shadow-sm">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold">My Roster</div>
+            <div className="text-xs text-muted-foreground">
+              Populates automatically from picks for your team
+              {!myTeamId ? " (missing teamId)" : ""}
             </div>
-
-            {/* Horizontal + vertical scroll container */}
-            <div className="max-h-[72vh] overflow-auto">
-              <div className="min-w-[980px]">
-                {/* Header row */}
-                <div className="sticky top-0 z-20 grid"
-                     style={{ gridTemplateColumns: `90px repeat(${teamCount}, minmax(180px, 1fr))` }}>
-                  <div className="bg-muted/70 backdrop-blur border-b px-3 py-3 text-xs font-semibold sticky left-0 z-30">
-                    Round
-                  </div>
-                  {(teams.length ? teams : [{ id: "x", name: "Teams", order: 1 }]).map((t) => (
-                    <div key={t.id} className="bg-muted/70 backdrop-blur border-b px-3 py-3 text-xs font-semibold">
-                      <div className="truncate">{t.name}</div>
-                      <div className="text-[11px] text-muted-foreground font-normal">Pick Order #{t.order}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Rows */}
-                <div className="divide-y">
-                  {Array.from({ length: computedRoundsNeeded }).map((_, rIdx) => {
-                    const round = rIdx + 1;
-
-                    return (
-                      <div
-                        key={round}
-                        className="grid"
-                        style={{ gridTemplateColumns: `90px repeat(${teamCount}, minmax(180px, 1fr))` }}
-                      >
-                        {/* Round number (sticky) */}
-                        <div className="sticky left-0 z-10 bg-card px-3 py-3 text-sm font-semibold border-r">
-                          {round}
-                        </div>
-
-                        {(teams.length ? teams : [{ id: "x", name: "—", order: 1 }]).map((t, idx) => {
-                          const pick = teams.length ? pickLookup.get(`${round}:${t.id}`) ?? null : null;
-
-                          
-                          const curPickNum = event?.currentPick ?? 1;
-                          const expectedRound = Math.floor((curPickNum - 1) / Math.max(1, teams.length)) + 1;
-                          const isCurrentCell =
-                            !event?.isPaused &&
-                            teams.length > 0 &&
-                            round === expectedRound &&
-                            t.id === onClockTeam?.id;
-
-                          const isNextCell =
-                            teams.length > 0 &&
-                            round === expectedRound &&
-                            t.id === onDeckTeam?.id;
-
-                          return (
-                            <div
-                              key={`${round}-${t.id}-${idx}`}
-                              className={cx(
-                                "px-3 py-3",
-                                pick ? "bg-background" : "bg-background/50",
-                                isCurrentCell && "bg-emerald-50/80 dark:bg-emerald-950/25",
-                                isNextCell && "bg-amber-50/60 dark:bg-amber-950/20"
-                              )}
-                            >
-                              {pick ? (
-                                <div className="space-y-1">
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-[11px] rounded-full border bg-muted px-2 py-0.5">
-                                      #{pick.overallNumber}
-                                    </span>
-                                    <span className="text-[11px] text-muted-foreground">
-                                      P{pick.pickInRound}
-                                    </span>
-                                  </div>
-                                  <div className="font-semibold leading-snug">
-                                    {pick.player.fullName}
-                                  </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {pick.player.rank != null ? `Rank ${pick.player.rank}` : ""}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="h-full flex items-center justify-between gap-2">
-                                  <div className="text-sm text-muted-foreground/70">
-                                    {isCurrentCell ? (
-                                      <span className="font-semibold text-emerald-700 dark:text-emerald-200">On the clock</span>
-                                    ) : isNextCell ? (
-                                      <span className="font-semibold text-amber-700 dark:text-amber-200">On deck</span>
-                                    ) : (
-                                      <span>—</span>
-                                    )}
-                                  </div>
-                                  {isCurrentCell ? <Pill tone="good">Pick now</Pill> : isNextCell ? <Pill tone="warn">Next</Pill> : null}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="px-5 py-3 border-t text-xs text-muted-foreground">
-              Tip: this board becomes complete when you add <span className="font-semibold">/api/draft/picks</span> to return all picks.
-            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Pill tone="neutral">{myRoster.length} players</Pill>
           </div>
         </div>
 
-        {/* RIGHT RAIL */}
-        <div className="xl:col-span-4 space-y-4">
-          {/* Recent picks */}
-          <div className="rounded-3xl border bg-card p-5 shadow-sm">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold">Recent Picks</div>
-                <div className="text-xs text-muted-foreground">Latest selections as they come in</div>
-              </div>
-              <Pill tone="neutral">{picksForSidebar.length} shown</Pill>
+        {!myTeamId ? (
+          <div className="mt-3 text-sm text-muted-foreground">
+            Add <span className="font-semibold">?teamId=</span> to the URL (or set{" "}
+            <span className="font-semibold">{MY_TEAM_ID_KEY}</span> in localStorage) to enable roster.
+          </div>
+        ) : myRoster.length === 0 ? (
+          <div className="mt-3 text-sm text-muted-foreground">No picks yet.</div>
+        ) : (
+          <div className="mt-3 rounded-2xl border overflow-hidden">
+            <div className="grid grid-cols-12 bg-muted px-3 py-2 text-xs font-semibold">
+              <div className="col-span-7">Player</div>
+              <div className="col-span-3">Rating</div>
+              <div className="col-span-2 text-right">Pick</div>
             </div>
-
-            <div className="mt-3 divide-y">
-              {picksForSidebar.length === 0 ? (
-                <div className="py-6 text-sm text-muted-foreground">No picks yet.</div>
-              ) : (
-                picksForSidebar.map((p) => (
-                  <div key={p.id} className="py-3 flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs rounded-full border bg-muted px-2 py-0.5">#{p.overallNumber}</span>
-                        <div className="font-semibold truncate">{p.team.name}</div>
-                      </div>
-                      <div className="mt-1 text-sm text-muted-foreground truncate">
-                        {p.player.fullName}
-                        {p.player.rank !== null ? ` · Rank ${p.player.rank}` : ""}
-                      </div>
+            <div className="divide-y">
+              {myRoster.map((p) => {
+                const rating =
+                  p.player.rank == null
+                    ? null
+                    : p.player.rank <= 10
+                    ? 5
+                    : p.player.rank <= 20
+                    ? 4
+                    : p.player.rank <= 30
+                    ? 3
+                    : p.player.rank <= 40
+                    ? 2
+                    : 1;
+                return (
+                  <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm">
+                    <div className="col-span-7 font-semibold truncate">{p.player.fullName}</div>
+                    <div className="col-span-3 flex items-center">
+                      <Stars value={rating} />
                     </div>
-                    <div className="text-xs text-muted-foreground whitespace-nowrap">
-                      R{p.round} · P{p.pickInRound}
+                    <div className="col-span-2 text-right text-xs text-muted-foreground tabular-nums">
+                      #{p.overallNumber}
                     </div>
                   </div>
-                ))
-              )}
+                );
+              })}
             </div>
           </div>
+        )}
+      </div>
 
-          {/* Remaining players */}
-          <div className="rounded-3xl border bg-card p-5 shadow-sm">
+      {/* MAIN: Eligible list + Draft board */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
+        {/* Eligible players */}
+        <div className="xl:col-span-8">
+          <div className="rounded-3xl border bg-card p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold">Remaining Players</div>
+                <div className="text-sm font-semibold">Eligible Players</div>
                 <div className="text-xs text-muted-foreground">
                   Showing <span className="font-semibold">{filteredRemaining.length}</span> of{" "}
                   <span className="font-semibold">{remaining.length}</span>
+                  {isLive ? " · Drafting enabled when it’s your turn" : " · Build your draft board now"}
                 </div>
               </div>
+
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search…"
-                className="h-9 w-44 rounded-md border px-3 text-sm"
+                className="h-9 w-52 rounded-md border px-3 text-sm"
               />
             </div>
 
             <div className="mt-3 rounded-2xl border overflow-hidden">
               <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold sticky top-0">
-                <div className="col-span-8">Player</div>
-                <div className="col-span-4">Rating</div>
+                <div className="col-span-6">Player</div>
+                <div className="col-span-3">Rating</div>
+                <div className="col-span-3 text-right">Actions</div>
               </div>
 
               {filteredRemaining.length === 0 ? (
                 <div className="px-3 py-6 text-sm text-muted-foreground">No matches.</div>
               ) : (
-                <div className="divide-y max-h-[520px] overflow-auto">
-                  {filteredRemaining.map((p) => (
-                    <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition">
-                      <div className="col-span-8 font-semibold truncate">{p.fullName}</div>
-                      <div className="col-span-4 flex items-center">
-                        <Stars value={p.rating} />
+                <div className="divide-y max-h-[70vh] overflow-auto">
+                  {filteredRemaining.map((p) => {
+                    const onBoard = isOnDraftBoard(p.id);
+                    const canDraft = isLive && isMyTurn && !draftBusy;
+
+                    return (
+                      <div
+                        key={p.id}
+                        className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition"
+                      >
+                        <div className="col-span-6 font-semibold truncate">{p.fullName}</div>
+
+                        <div className="col-span-3 flex items-center">
+                          <Stars value={p.rating} />
+                        </div>
+
+                        <div className="col-span-3 flex items-center justify-end gap-2">
+                          {!onBoard ? (
+                            <button
+                              onClick={() => addToDraftBoard(p.id)}
+                              className="h-8 rounded-md border px-2 text-xs hover:bg-muted"
+                            >
+                              Add to Draft Board
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => removeFromDraftBoard(p.id)}
+                              className="h-8 rounded-md border px-2 text-xs hover:bg-muted"
+                            >
+                              Remove
+                            </button>
+                          )}
+
+                          <button
+                            disabled={!canDraft || draftBusy === p.id}
+                            onClick={() => coachDraftPlayer(p.id)}
+                            className={cx(
+                              "h-8 rounded-md px-3 text-xs border",
+                              canDraft
+                                ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
+                                : "bg-muted text-muted-foreground"
+                            )}
+                            title={
+                              !isLive
+                                ? "Draft is not live yet"
+                                : !myTeamId
+                                ? "Missing teamId"
+                                : !isMyTurn
+                                ? "Not your turn"
+                                : event?.isPaused
+                                ? "Draft is paused"
+                                : "Draft player"
+                            }
+                          >
+                            {draftBusy === p.id ? "Drafting…" : "Draft"}
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
 
             <div className="mt-3 text-xs text-muted-foreground">
-              <span className="font-semibold">/api/draft/players</span>.
+              Data source: <span className="font-semibold">/api/draft/players?eligible=true&drafted=false</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Draft board */}
+        <div className="xl:col-span-4">
+          <div className="rounded-3xl border bg-card p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">My Draft Board</div>
+                <div className="text-xs text-muted-foreground">Players you’ve highlighted</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Pill tone="neutral">{draftBoardPlayers.length}</Pill>
+                <button onClick={clearDraftBoard} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            {draftBoardPlayers.length === 0 ? (
+              <div className="mt-4 text-sm text-muted-foreground">
+                Add players from the Eligible list to build your board.
+              </div>
+            ) : (
+              <div className="mt-3 rounded-2xl border overflow-hidden">
+                <div className="grid grid-cols-12 bg-muted px-3 py-2 text-xs font-semibold">
+                  <div className="col-span-7">Player</div>
+                  <div className="col-span-3">Rating</div>
+                  <div className="col-span-2 text-right">Actions</div>
+                </div>
+
+                <div className="divide-y max-h-[70vh] overflow-auto">
+                  {draftBoardPlayers.map((p) => {
+                    const canDraft = isLive && isMyTurn && !draftBusy;
+                    return (
+                      <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm hover:bg-muted/40 transition">
+                        <div className="col-span-7 font-semibold truncate">{p.fullName}</div>
+                        <div className="col-span-3 flex items-center">
+                          <Stars value={p.rating} />
+                        </div>
+                        <div className="col-span-2 flex justify-end gap-2">
+                          <button
+                            onClick={() => removeFromDraftBoard(p.id)}
+                            className="h-8 rounded-md border px-2 text-xs hover:bg-muted"
+                          >
+                            ✕
+                          </button>
+                          <button
+                            disabled={!canDraft || draftBusy === p.id}
+                            onClick={() => coachDraftPlayer(p.id)}
+                            className={cx(
+                              "h-8 rounded-md px-2 text-xs border",
+                              canDraft
+                                ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
+                                : "bg-muted text-muted-foreground"
+                            )}
+                          >
+                            {draftBusy === p.id ? "…" : "Draft"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-3 text-xs text-muted-foreground">
+              Saved locally in <span className="font-semibold">{DRAFT_BOARD_KEY}</span>
             </div>
           </div>
         </div>

@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
+    const session = await getServerSession(authOptions);
+    const meId = (session?.user as any)?.id as string | undefined;
+    const meRole = (session?.user as any)?.role as string | undefined;
+
     const event =
       (await prisma.draftEvent.findFirst({
         where: { phase: "LIVE" },
@@ -20,6 +26,8 @@ export async function GET() {
         teams: [],
         recentPicks: [],
         counts: { undrafted: 0, drafted: 0 },
+        me: meId ? { id: meId, role: meRole ?? null } : null,
+        myTeam: null,
       });
     }
 
@@ -53,11 +61,23 @@ export async function GET() {
       }),
     ]);
 
+    let myTeam: { id: string; name: string; order: number } | null = null;
+
+    if (meId) {
+      const t = await prisma.draftTeam.findFirst({
+        where: { draftEventId: event.id, coachUserId: meId },
+        select: { id: true, name: true, order: true },
+      });
+      myTeam = t ?? null;
+    }
+
     return NextResponse.json({
       event,
       teams,
-      recentPicks: recentPicks.reverse(), 
+      recentPicks: recentPicks.reverse(),
       counts: { undrafted, drafted },
+      me: meId ? { id: meId, role: meRole ?? null } : null,
+      myTeam,
     });
   } catch (e) {
     console.error(e);
