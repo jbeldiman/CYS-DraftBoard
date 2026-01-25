@@ -12,8 +12,28 @@ async function latestEventId() {
   return e.id;
 }
 
-function normalizeKey(v: string | null | undefined) {
+function norm(v: string | null | undefined) {
   return (v ?? "").trim().toLowerCase();
+}
+
+function makeGroupKey(p: {
+  primaryEmail: string | null;
+  primaryPhone: string | null;
+  guardian1Name: string | null;
+  guardian2Name: string | null;
+}) {
+  const email = norm(p.primaryEmail);
+  if (email) return `email:${email}`;
+
+  const phone = norm(p.primaryPhone).replace(/[^\d]/g, "");
+  if (phone) return `phone:${phone}`;
+
+  const g1 = norm(p.guardian1Name);
+  const g2 = norm(p.guardian2Name);
+  const guardians = [g1, g2].filter(Boolean).join("|");
+  if (guardians) return `guardians:${guardians}`;
+
+  return "";
 }
 
 export async function GET() {
@@ -22,7 +42,6 @@ export async function GET() {
   const players = await prisma.draftPlayer.findMany({
     where: {
       draftEventId,
-      isDraftEligible: true,
     },
     select: {
       id: true,
@@ -31,18 +50,17 @@ export async function GET() {
       fullName: true,
       primaryEmail: true,
       primaryPhone: true,
+      guardian1Name: true,
+      guardian2Name: true,
+      isDraftEligible: true,
     },
   });
 
   const groups: Record<string, typeof players> = {};
 
   for (const p of players) {
-    const key =
-      normalizeKey(p.primaryEmail) ||
-      normalizeKey(p.primaryPhone);
-
+    const key = makeGroupKey(p);
     if (!key) continue;
-
     if (!groups[key]) groups[key] = [];
     groups[key].push(p);
   }
@@ -51,16 +69,21 @@ export async function GET() {
     .filter(([, kids]) => kids.length > 1)
     .map(([groupKey, kids]) => ({
       groupKey,
-      players: [...kids, ...kids],
+      players: [...kids, ...kids].map((k) => ({
+        id: k.id,
+        firstName: k.firstName,
+        lastName: k.lastName,
+        fullName: k.fullName,
+        primaryEmail: k.primaryEmail,
+        primaryPhone: k.primaryPhone,
+      })),
     }));
 
   const costs = await prisma.siblingDraftCost.findMany({
     where: { draftEventId },
   });
 
-  const costByKey = Object.fromEntries(
-    costs.map((c) => [c.groupKey, c.draftCost])
-  );
+  const costByKey = Object.fromEntries(costs.map((c) => [c.groupKey, c.draftCost]));
 
   return NextResponse.json({
     draftEventId,
