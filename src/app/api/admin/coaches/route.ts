@@ -9,6 +9,9 @@ function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
 }
 
+type SaveOrderBody = { coachIds?: unknown };
+type CreateCoachBody = { name?: unknown; email?: unknown; password?: unknown };
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
@@ -31,11 +34,11 @@ export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
     if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const body = await req.json().catch(() => ({}));
+    const raw = (await req.json().catch(() => ({}))) as SaveOrderBody & CreateCoachBody;
 
-    const coachIds = Array.isArray(body?.coachIds) ? body.coachIds.map(String) : null;
+    const coachIds: string[] = Array.isArray(raw?.coachIds) ? (raw.coachIds as unknown[]).map((v) => String(v)) : [];
 
-    if (coachIds && coachIds.length > 0) {
+    if (coachIds.length > 0) {
       const found = await prisma.user.findMany({
         where: { id: { in: coachIds }, role: "COACH" },
         select: { id: true },
@@ -46,7 +49,7 @@ export async function POST(req: Request) {
       }
 
       await prisma.$transaction(
-        coachIds.map((id, idx) =>
+        coachIds.map((id: string, idx: number) =>
           prisma.user.update({
             where: { id },
             data: { coachOrder: idx + 1 },
@@ -57,9 +60,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, updated: coachIds.length });
     }
 
-    const name = typeof body?.name === "string" ? body.name.trim() : "";
-    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
-    const password = typeof body?.password === "string" ? body.password : "";
+    const name = typeof raw?.name === "string" ? raw.name.trim() : "";
+    const email = typeof raw?.email === "string" ? raw.email.trim().toLowerCase() : "";
+    const password = typeof raw?.password === "string" ? raw.password : "";
 
     if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
     if (!password) return NextResponse.json({ error: "Temporary password is required" }, { status: 400 });
@@ -71,7 +74,8 @@ export async function POST(req: Request) {
 
     const nextOrder = (max._max.coachOrder ?? 0) + 1;
 
-    const passwordHash = password; 
+
+    const passwordHash = password;
 
     const user = await prisma.user.create({
       data: {
@@ -108,7 +112,7 @@ export async function DELETE(req: Request) {
     });
 
     await prisma.$transaction(
-      remaining.map((u, idx) =>
+      remaining.map((u: { id: string }, idx: number) =>
         prisma.user.update({
           where: { id: u.id },
           data: { coachOrder: idx + 1 },
