@@ -18,6 +18,27 @@ type ImportResult = {
   error?: string;
 };
 
+function shuffle<T>(arr: T[]) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = a[i];
+    a[i] = a[j];
+    a[j] = tmp;
+  }
+  return a;
+}
+
+function normalize(s: string) {
+  return s.trim().toLowerCase();
+}
+
+function isJosephBeldiman(c: Coach) {
+  const n = normalize(c.name ?? "");
+  const e = normalize(c.email ?? "");
+  return n === "joseph beldiman" || e === "joseph.beldiman@flocksafety.com" || e === "jbeldiman@flocksafety.com";
+}
+
 export default function AdminPage() {
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [name, setName] = useState("");
@@ -42,6 +63,15 @@ export default function AdminPage() {
   const [importingFall, setImportingFall] = useState(false);
   const [ratingsMsg, setRatingsMsg] = useState<string | null>(null);
   const [ratingsErr, setRatingsErr] = useState<string | null>(null);
+
+  const [syncingTeams, setSyncingTeams] = useState(false);
+  const [teamsMsg, setTeamsMsg] = useState<string | null>(null);
+  const [teamsErr, setTeamsErr] = useState<string | null>(null);
+
+  const [randomizeMsg, setRandomizeMsg] = useState<string | null>(null);
+  const [randomizeErr, setRandomizeErr] = useState<string | null>(null);
+
+  const [removingCoachId, setRemovingCoachId] = useState<string | null>(null);
 
   async function loadCoaches() {
     const res = await fetch("/api/admin/coaches", { cache: "no-store" });
@@ -94,6 +124,33 @@ export default function AdminPage() {
     setEmail("");
     setPassword("");
     await loadCoaches();
+  }
+
+  async function removeCoach(coachId: string) {
+    setMsg(null);
+    setErr(null);
+    setTeamsMsg(null);
+    setTeamsErr(null);
+
+    const coach = coaches.find((c) => c.id === coachId);
+    const label = coach?.email ?? coach?.name ?? coachId;
+
+    const ok = window.confirm(`Remove coach account?\n\n${label}\n\nThis cannot be undone.`);
+    if (!ok) return;
+
+    setRemovingCoachId(coachId);
+    try {
+      const res = await fetch(`/api/admin/coaches/${encodeURIComponent(coachId)}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setErr(json?.error ?? "Failed to remove coach");
+        return;
+      }
+      setMsg(`Removed coach: ${label}`);
+      await loadCoaches();
+    } finally {
+      setRemovingCoachId(null);
+    }
   }
 
   async function startDraft() {
@@ -226,6 +283,79 @@ export default function AdminPage() {
     } finally {
       if (season === "spring2025") setImportingSpring(false);
       else setImportingFall(false);
+    }
+  }
+
+  async function syncTeamsToDraft() {
+    setTeamsMsg(null);
+    setTeamsErr(null);
+    setSyncingTeams(true);
+    try {
+      const res = await fetch("/api/draft/admin/sync-teams", { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTeamsErr(json?.error ?? "Failed to sync teams");
+        return;
+      }
+      setTeamsMsg(`Synced ${json?.teams?.length ?? 0} teams into the draft.`);
+      await loadDraftState();
+    } finally {
+      setSyncingTeams(false);
+    }
+  }
+
+  async function saveCoachOrderToServer(orderedCoachIds: string[]) {
+    const res = await fetch("/api/admin/coaches/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ coachIds: orderedCoachIds }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json?.error ?? "Failed to save coach order");
+    return json;
+  }
+
+  async function randomizeOrder(e: React.MouseEvent<HTMLButtonElement>) {
+    setRandomizeMsg(null);
+    setRandomizeErr(null);
+
+    if (coaches.length < 2) {
+      setRandomizeErr("Need at least 2 coaches to randomize.");
+      return;
+    }
+
+    const shift = e.shiftKey;
+
+    try {
+      const josephIndex = coaches.findIndex(isJosephBeldiman);
+      const joseph = josephIndex >= 0 ? coaches[josephIndex] : null;
+
+      let pool = [...coaches];
+      if (joseph) pool = pool.filter((c) => c.id !== joseph.id);
+
+      let shuffled = shuffle(pool);
+
+      if (joseph && shift) {
+        const placeLast = Math.random() < 0.5;
+        if (placeLast) {
+          shuffled = [...shuffled, joseph];
+        } else {
+          shuffled = [...shuffled.slice(0, Math.max(0, shuffled.length - 1)), joseph, shuffled[shuffled.length - 1]].filter(
+            Boolean
+          ) as Coach[];
+        }
+        setRandomizeMsg("Randomized order (Shift held: Joseph placed last/second-to-last).");
+      } else {
+        if (joseph) shuffled = shuffle([...shuffled, joseph]);
+        setRandomizeMsg("Randomized order.");
+      }
+
+      setCoaches(shuffled);
+
+      await saveCoachOrderToServer(shuffled.map((c) => c.id));
+      setRandomizeMsg((m) => (m ? `${m} Saved.` : "Randomized order. Saved."));
+    } catch (e2: any) {
+      setRandomizeErr(e2?.message ?? "Failed to randomize/save order");
     }
   }
 
@@ -413,7 +543,7 @@ export default function AdminPage() {
       <hr style={{ margin: "16px 0" }} />
 
       <h2 style={{ fontSize: 18, fontWeight: 700 }}>Draft Controls</h2>
-      <div style={{ display: "grid", gap: 10, maxWidth: 620 }}>
+      <div style={{ display: "grid", gap: 10, maxWidth: 720 }}>
         <div style={{ display: "grid", gap: 6 }}>
           <div style={{ fontWeight: 700 }}>Pick clock (seconds)</div>
           <input
@@ -429,7 +559,7 @@ export default function AdminPage() {
           />
         </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <button
             type="button"
             onClick={startDraft}
@@ -481,6 +611,27 @@ export default function AdminPage() {
           >
             Stop Draft
           </button>
+
+          <button
+            type="button"
+            onClick={syncTeamsToDraft}
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #222",
+              background: syncingTeams ? "#888" : "#0a7",
+              color: "white",
+              fontWeight: 800,
+              maxWidth: 220,
+              cursor: syncingTeams ? "not-allowed" : "pointer",
+            }}
+            disabled={syncingTeams}
+          >
+            {syncingTeams ? "Syncing…" : "Sync Teams to Draft"}
+          </button>
+
+          {teamsMsg ? <div style={{ color: "green", fontWeight: 800 }}>{teamsMsg}</div> : null}
+          {teamsErr ? <div style={{ color: "crimson", fontWeight: 800 }}>{teamsErr}</div> : null}
         </div>
 
         <div style={{ padding: 12, border: "1px solid #ddd", borderRadius: 10, maxWidth: 620 }}>
@@ -539,9 +690,37 @@ export default function AdminPage() {
 
       <hr style={{ margin: "24px 0" }} />
 
-      <h2 style={{ fontSize: 18, fontWeight: 700 }}>Coaches</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "end", flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Coaches</h2>
+          <div style={{ opacity: 0.8, fontSize: 13, marginTop: 4 }}>
+            Draft order is shown below. Randomize Order saves instantly.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={randomizeOrder}
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #222",
+              background: "#111",
+              color: "white",
+              fontWeight: 800,
+            }}
+          >
+            Randomize Order
+          </button>
+
+          {randomizeMsg ? <div style={{ color: "green", fontWeight: 800 }}>{randomizeMsg}</div> : null}
+          {randomizeErr ? <div style={{ color: "crimson", fontWeight: 800 }}>{randomizeErr}</div> : null}
+        </div>
+      </div>
+
       <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-        {coaches.map((c) => (
+        {coaches.map((c, idx) => (
           <div
             key={c.id}
             style={{
@@ -554,14 +733,51 @@ export default function AdminPage() {
               alignItems: "center",
             }}
           >
-            <div>
-              <div style={{ fontWeight: 800 }}>{c.name ?? "(no name)"}</div>
-              <div style={{ opacity: 0.8 }}>{c.email}</div>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", minWidth: 0 }}>
+              <div
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #222",
+                  fontWeight: 900,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Draft Order {idx + 1}
+              </div>
+
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {c.name ?? "(no name)"}
+                </div>
+                <div style={{ opacity: 0.8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {c.email}
+                </div>
+              </div>
             </div>
 
-            <a href={`/draft?view=${encodeURIComponent(c.id)}`} style={{ textDecoration: "underline", fontWeight: 700 }}>
-              View Board
-            </a>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", justifyContent: "end" }}>
+              <a href={`/draft?view=${encodeURIComponent(c.id)}`} style={{ textDecoration: "underline", fontWeight: 800 }}>
+                View Board
+              </a>
+
+              <button
+                type="button"
+                onClick={() => removeCoach(c.id)}
+                disabled={removingCoachId === c.id}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid #b00020",
+                  background: removingCoachId === c.id ? "#ddd" : "#b00020",
+                  color: "white",
+                  fontWeight: 900,
+                  cursor: removingCoachId === c.id ? "not-allowed" : "pointer",
+                }}
+              >
+                {removingCoachId === c.id ? "Removing…" : "Remove"}
+              </button>
+            </div>
           </div>
         ))}
         {coaches.length === 0 ? <div style={{ opacity: 0.7 }}>No coaches yet.</div> : null}
