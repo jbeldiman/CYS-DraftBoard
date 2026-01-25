@@ -9,119 +9,89 @@ function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
 }
 
-async function latestEventId() {
-  const e = await prisma.draftEvent.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { id: true },
-  });
+async function currentEvent() {
+  const e =
+    (await prisma.draftEvent.findFirst({
+      where: { phase: "LIVE" },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true },
+    })) ??
+    (await prisma.draftEvent.findFirst({
+      orderBy: { updatedAt: "desc" },
+      select: { id: true },
+    }));
+
   if (!e?.id) throw new Error("No draft event found");
   return e.id;
 }
 
-function toIntOrNull(v: any): number | null {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  if (!Number.isFinite(n)) return null;
-  return Math.trunc(n);
+function boolParam(v: string | null) {
+  if (v === null) return null;
+  if (v === "true" || v === "1" || v === "yes") return true;
+  if (v === "false" || v === "0" || v === "no") return false;
+  return null;
 }
 
-function toStringOrNull(v: any): string | null {
-  if (v === null || v === undefined) return null;
-  const s = String(v);
-  return s;
+function computeRating(p: { fall2025Rating: number | null; spring2025Rating: number | null; rank: number | null }) {
+  const direct = p.fall2025Rating ?? p.spring2025Rating;
+  if (direct != null) return Math.max(1, Math.min(5, Math.trunc(direct)));
+
+  const r = p.rank;
+  if (r == null) return null;
+
+  if (r <= 10) return 5;
+  if (r <= 20) return 4;
+  if (r <= 30) return 3;
+  if (r <= 40) return 2;
+  return 1;
 }
 
-function normalizeIncomingPlayers(body: any): any[] {
-  if (Array.isArray(body?.players)) return body.players;
-  if (body?.player && typeof body.player === "object") return [body.player];
-  if (body && typeof body === "object" && body.id) return [body];
-  return [];
-}
-
-export async function POST(req: Request) {
+export async function GET(req: Request) {
   try {
-    const session = await getServerSession(authOptions);
-    if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const url = new URL(req.url);
+    const eligible = boolParam(url.searchParams.get("eligible"));
+    const drafted = boolParam(url.searchParams.get("drafted"));
 
-    const draftEventId = await latestEventId();
-    const body = await req.json().catch(() => null);
+    const draftEventId = await currentEvent();
 
-    const incoming = normalizeIncomingPlayers(body);
+    const where: any = { draftEventId };
+    if (eligible !== null) where.isDraftEligible = eligible;
+    if (drafted !== null) where.isDrafted = drafted;
 
-    const clean = incoming
-      .map((p: any) => {
-        const id = (p?.id ?? "").toString().trim();
-        if (!id) return null;
-
-        const rank = toIntOrNull(p?.rank);
-        const fall2025Rating = toIntOrNull(p?.fall2025Rating);
-        const spring2025Rating = toIntOrNull(p?.spring2025Rating);
-        const notes = toStringOrNull(p?.notes);
-
-        return { id, rank, fall2025Rating, spring2025Rating, notes };
-      })
-      .filter(Boolean) as {
-      id: string;
-      rank: number | null;
-      fall2025Rating: number | null;
-      spring2025Rating: number | null;
-      notes: string | null;
-    }[];
-
-    if (clean.length === 0) {
-      return NextResponse.json({ error: "No valid players provided" }, { status: 400 });
-    }
-
-    await prisma.$transaction(
-      clean.map((p) =>
-        prisma.draftPlayer.updateMany({
-          where: { id: p.id, draftEventId },
-          data: {
-            rank: p.rank,
-            fall2025Rating: p.fall2025Rating,
-            spring2025Rating: p.spring2025Rating,
-            notes: p.notes,
-          },
-        })
-      )
-    );
-
-    const ids = clean.map((p) => p.id);
-
-    const updated = await prisma.draftPlayer.findMany({
-      where: { draftEventId, id: { in: ids } },
+    const players = await prisma.draftPlayer.findMany({
+      where,
+      orderBy: [{ rank: "asc" }, { lastName: "asc" }, { firstName: "asc" }],
       select: {
         id: true,
-        registrationId: true,
-        firstName: true,
-        lastName: true,
         fullName: true,
-        gender: true,
-        dob: true,
-        birthYear: true,
-        leagueChoice: true,
-        wantsU13: true,
         jerseySize: true,
-        guardian1Name: true,
-        guardian2Name: true,
-        primaryPhone: true,
-        primaryEmail: true,
-        experience: true,
         rank: true,
-        spring2025Rating: true,
         fall2025Rating: true,
-        notes: true,
+        spring2025Rating: true,
         isDraftEligible: true,
         isDrafted: true,
-        draftedAt: true,
-        draftedTeam: { select: { name: true, order: true } },
       },
     });
 
-    return NextResponse.json({ draftEventId, players: updated });
+
+    const out = players.map((p) => ({
+      id: p.id,
+      fullName: p.fullName,
+      jerseySize: p.jerseySize,
+      rank: p.rank,
+      rating: computeRating({
+        fall2025Rating: p.fall2025Rating,
+        spring2025Rating: p.spring2025Rating,
+        rank: p.rank,
+      }),
+      isDraftEligible: p.isDraftEligible,
+      isDrafted: p.isDrafted,
+    }));
+
+    return NextResponse.json({ draftEventId, players: out });
   } catch (err: any) {
     return NextResponse.json(
-      { error: err?.message ? String(err.message) : "Failed to update players" },
+      { error: err?.message ? String(err.message) : "Failed to load players" },
       { status: 500 }
     );
   }

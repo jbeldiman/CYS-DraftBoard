@@ -3,64 +3,36 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
-async function getOrCreateDraftEvent() {
-  const existing = await prisma.draftEvent.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { id: true },
-  });
-
-  if (existing?.id) return existing.id;
-
-  const created = await prisma.draftEvent.create({
-    data: {
-      name: "CYS Draft Night",
-      scheduledAt: new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-      phase: "SETUP",
-      currentPick: 1,
-      pickClockSeconds: 120,
-      isPaused: true,
-    },
-    select: { id: true },
-  });
-
-  return created.id;
-}
-
 export async function GET() {
-  const draftEventId = await getOrCreateDraftEvent();
+  try {
+    const event =
+      (await prisma.draftEvent.findFirst({
+        where: { phase: "LIVE" },
+        orderBy: { updatedAt: "desc" },
+      })) ??
+      (await prisma.draftEvent.findFirst({
+        orderBy: { updatedAt: "desc" },
+      }));
 
-  const [event, teams, picks, undraftedCount, draftedCount] = await Promise.all([
-    prisma.draftEvent.findUnique({
-      where: { id: draftEventId },
-      select: {
-        id: true,
-        name: true,
-        scheduledAt: true,
-        phase: true,
-        currentPick: true,
-        pickClockSeconds: true,
-        isPaused: true,
-        clockEndsAt: true,
-        pauseRemainingSecs: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    }),
-    prisma.draftTeam.findMany({
-      where: { draftEventId },
+    if (!event) {
+      return NextResponse.json({
+        event: null,
+        teams: [],
+        recentPicks: [],
+        counts: { undrafted: 0, drafted: 0 },
+      });
+    }
+
+    const teams = await prisma.draftTeam.findMany({
+      where: { draftEventId: event.id },
       orderBy: { order: "asc" },
-      select: {
-        id: true,
-        name: true,
-        order: true,
-        coachUserId: true,
-        coachUser: { select: { id: true, name: true, email: true } },
-      },
-    }),
-    prisma.draftPick.findMany({
-      where: { draftEventId },
+      select: { id: true, name: true, order: true },
+    });
+
+    const recentPicks = await prisma.draftPick.findMany({
+      where: { draftEventId: event.id },
       orderBy: { overallNumber: "desc" },
-      take: 20,
+      take: 12,
       select: {
         id: true,
         overallNumber: true,
@@ -70,15 +42,25 @@ export async function GET() {
         team: { select: { id: true, name: true, order: true } },
         player: { select: { id: true, fullName: true, rank: true } },
       },
-    }),
-    prisma.draftPlayer.count({ where: { draftEventId, isDrafted: false } }),
-    prisma.draftPlayer.count({ where: { draftEventId, isDrafted: true } }),
-  ]);
+    });
 
-  return NextResponse.json({
-    event,
-    teams,
-    recentPicks: picks,
-    counts: { undrafted: undraftedCount, drafted: draftedCount },
-  });
+    const [undrafted, drafted] = await Promise.all([
+      prisma.draftPlayer.count({
+        where: { draftEventId: event.id, isDraftEligible: true, isDrafted: false },
+      }),
+      prisma.draftPlayer.count({
+        where: { draftEventId: event.id, isDraftEligible: true, isDrafted: true },
+      }),
+    ]);
+
+    return NextResponse.json({
+      event,
+      teams,
+      recentPicks: recentPicks.reverse(), 
+      counts: { undrafted, drafted },
+    });
+  } catch (e) {
+    console.error(e);
+    return NextResponse.json({ error: "Failed to load draft state" }, { status: 500 });
+  }
 }
