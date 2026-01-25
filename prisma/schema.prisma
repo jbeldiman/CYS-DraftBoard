@@ -117,6 +117,7 @@ model DraftEvent {
   teams              DraftTeam[]
   players            DraftPlayer[]
   picks              DraftPick[]
+  siblingCosts       SiblingDraftCost[]
 
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
@@ -208,4 +209,19 @@ model DraftPick {
   @@unique([draftEventId, overallNumber])
   @@unique([draftEventId, playerId])
   @@index([draftEventId, teamId])
+}
+
+model SiblingDraftCost {
+  id           String     @id @default(cuid())
+  draftEventId String
+  draftEvent   DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
+
+  groupKey     String
+  draftCost    Int?
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([draftEventId, groupKey])
+  @@index([draftEventId])
 }
