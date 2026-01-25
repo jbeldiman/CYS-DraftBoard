@@ -24,7 +24,6 @@ export default function TopNav({ session }: { session: NavSession | null }) {
     { href: "/remaining-players", label: "Remaining Players" },
     { href: "/rosters", label: "My Roster" },
     { href: "/siblings", label: "Siblings" },
-    { href: "/history", label: "History" },
   ];
 
   const links = isAdmin
