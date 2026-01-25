@@ -11,7 +11,6 @@ export default function Home() {
         <div className="flex gap-3">
           <Link className="underline" href="/draft">Go to Draft</Link>
           <Link className="underline" href="/siblings">Siblings</Link>
-          <Link className="underline" href="/history">History</Link>
           <Link className="underline" href="/admin">Admin</Link>
         </div>
       </div>
