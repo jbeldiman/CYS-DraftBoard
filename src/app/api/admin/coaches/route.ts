@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
+import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
 
@@ -66,6 +67,10 @@ export async function POST(req: Request) {
 
     if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
     if (!password) return NextResponse.json({ error: "Temporary password is required" }, { status: 400 });
+    if (password.length < 8) return NextResponse.json({ error: "Temporary password must be at least 8 characters" }, { status: 400 });
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) return NextResponse.json({ error: "User with that email already exists" }, { status: 409 });
 
     const max = await prisma.user.aggregate({
       where: { role: "COACH" },
@@ -74,8 +79,7 @@ export async function POST(req: Request) {
 
     const nextOrder = (max._max.coachOrder ?? 0) + 1;
 
-
-    const passwordHash = password;
+    const passwordHash = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.create({
       data: {
