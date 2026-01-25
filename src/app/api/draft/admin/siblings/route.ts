@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
+
+function isAdmin(session: any) {
+  return session?.user && (session.user as any).role === "ADMIN";
+}
 
 async function latestEventId() {
   const e = await prisma.draftEvent.findFirst({
@@ -12,77 +18,34 @@ async function latestEventId() {
   return e.id;
 }
 
-function norm(v: string | null | undefined) {
-  return (v ?? "").trim().toLowerCase();
-}
-
-function makeGroupKey(p: { guardian1Name: string | null; primaryEmail: string | null }) {
-  const enroller = norm(p.guardian1Name);
-  if (enroller) return `enroller:${enroller}`;
-
-  const email = norm(p.primaryEmail);
-  if (email) return `email:${email}`;
-
-  return "";
-}
-
-export async function GET() {
-  const draftEventId = await latestEventId();
-
-  const eligiblePlayers = await prisma.draftPlayer.findMany({
-    where: { draftEventId, isDraftEligible: true },
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      fullName: true,
-      guardian1Name: true,
-      primaryEmail: true,
-    },
-  });
-
-  const buckets: Record<string, typeof eligiblePlayers> = {};
-
-  for (const p of eligiblePlayers) {
-    const key = makeGroupKey(p);
-    if (!key) continue;
-    if (!buckets[key]) buckets[key] = [];
-    buckets[key].push(p);
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions);
+  if (!isAdmin(session)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const groupsRaw = Object.entries(buckets)
-    .filter(([, kids]) => kids.length > 1)
-    .map(([groupKey, kids]) => ({
-      groupKey,
-      kids,
-    }));
+  const draftEventId = await latestEventId();
+  const body = await req.json().catch(() => null);
 
-  const costs = await prisma.siblingDraftCost.findMany({
-    where: { draftEventId },
+  const playerId = String(body?.playerId ?? "");
+  const draftCost = body?.draftCost === null || body?.draftCost === undefined ? "" : String(body.draftCost).trim();
+
+  if (!playerId) return NextResponse.json({ error: "playerId required" }, { status: 400 });
+
+  const player = await prisma.draftPlayer.findFirst({
+    where: { id: playerId, draftEventId, wantsU13: true, isDraftEligible: true },
+    select: { id: true, leagueChoice: true },
   });
 
-  const costByKey = Object.fromEntries(costs.map((c) => [c.groupKey, c.draftCost]));
+  if (!player) return NextResponse.json({ error: "Player not found or not eligible" }, { status: 404 });
 
-  const groups = groupsRaw.map((g) => ({
-    groupKey: g.groupKey,
-    draftCost: costByKey[g.groupKey] ?? null,
-    players: [...g.kids, ...g.kids].map((k) => ({
-      id: k.id,
-      firstName: k.firstName,
-      lastName: k.lastName,
-      fullName: k.fullName,
-      primaryEmail: k.primaryEmail,
-      primaryPhone: null,
-    })),
-  }));
+  const groupKey = (player.leagueChoice ?? "").trim() ? `league:${(player.leagueChoice ?? "").trim()}` : "league:unknown";
 
-  return NextResponse.json({
-    draftEventId,
-    debug: {
-      eligibleCount: eligiblePlayers.length,
-      uniqueGroupKeys: Object.keys(buckets).length,
-      siblingGroupsFound: groups.length,
-    },
-    groups,
+  await prisma.siblingDraftCost.upsert({
+    where: { draftEventId_playerId: { draftEventId, playerId } },
+    create: { draftEventId, playerId, groupKey, draftCost: draftCost || null },
+    update: { groupKey, draftCost: draftCost || null },
   });
+
+  return NextResponse.json({ ok: true });
 }

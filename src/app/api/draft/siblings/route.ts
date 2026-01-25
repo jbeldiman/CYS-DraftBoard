@@ -16,22 +16,25 @@ function norm(v: string | null | undefined) {
   return (v ?? "").trim().toLowerCase();
 }
 
-function makeGroupKey(p: {
-  primaryEmail: string | null;
-  primaryPhone: string | null;
-  guardian1Name: string | null;
-  guardian2Name: string | null;
-}) {
+function displayName(v: string | null | undefined) {
+  return (v ?? "").trim();
+}
+
+function makeRegistrantName(p: { guardian1Name: string | null; guardian2Name: string | null }) {
+  const g1 = displayName(p.guardian1Name);
+  const g2 = displayName(p.guardian2Name);
+  return g1 || g2 || "";
+}
+
+function makeRegistrantKey(p: { primaryEmail: string | null; primaryPhone: string | null; guardian1Name: string | null; guardian2Name: string | null }) {
   const email = norm(p.primaryEmail);
   if (email) return `email:${email}`;
 
   const phone = norm(p.primaryPhone).replace(/[^\d]/g, "");
   if (phone) return `phone:${phone}`;
 
-  const g1 = norm(p.guardian1Name);
-  const g2 = norm(p.guardian2Name);
-  const guardians = [g1, g2].filter(Boolean).join("|");
-  if (guardians) return `guardians:${guardians}`;
+  const g = norm(makeRegistrantName(p));
+  if (g) return `name:${g}`;
 
   return "";
 }
@@ -39,58 +42,75 @@ function makeGroupKey(p: {
 export async function GET() {
   const draftEventId = await latestEventId();
 
+
   const players = await prisma.draftPlayer.findMany({
     where: {
       draftEventId,
+      wantsU13: true,
+      isDraftEligible: true,
     },
     select: {
       id: true,
-      firstName: true,
-      lastName: true,
       fullName: true,
-      primaryEmail: true,
-      primaryPhone: true,
+      leagueChoice: true,
       guardian1Name: true,
       guardian2Name: true,
-      isDraftEligible: true,
+      primaryEmail: true,
+      primaryPhone: true,
     },
   });
 
-  const groups: Record<string, typeof players> = {};
+  const buckets: Record<string, typeof players> = {};
 
   for (const p of players) {
-    const key = makeGroupKey(p);
-    if (!key) continue;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(p);
+    const registrantKey = makeRegistrantKey(p);
+    const leagueKey = norm(p.leagueChoice);
+    if (!registrantKey || !leagueKey) continue;
+
+    const key = `${registrantKey}::league:${leagueKey}`;
+    if (!buckets[key]) buckets[key] = [];
+    buckets[key].push(p);
   }
 
-  const siblingGroups = Object.entries(groups)
+  const siblingGroups = Object.entries(buckets)
     .filter(([, kids]) => kids.length > 1)
-    .map(([groupKey, kids]) => ({
-      groupKey,
-      players: [...kids, ...kids].map((k) => ({
-        id: k.id,
-        firstName: k.firstName,
-        lastName: k.lastName,
-        fullName: k.fullName,
-        primaryEmail: k.primaryEmail,
-        primaryPhone: k.primaryPhone,
-      })),
-    }));
+    .map(([bucketKey, kids]) => {
+      const registrantName = makeRegistrantName(kids[0]);
+      const leagueChoice = kids[0].leagueChoice ?? "";
+
+      return {
+        bucketKey,
+        registrantName,
+        leagueChoice,
+        kids,
+      };
+    });
 
   const costs = await prisma.siblingDraftCost.findMany({
     where: { draftEventId },
+    select: { playerId: true, draftCost: true },
   });
 
-  const costByKey = Object.fromEntries(costs.map((c) => [c.groupKey, c.draftCost]));
+  const costByPlayerId = Object.fromEntries(costs.map((c) => [c.playerId, c.draftCost ?? ""]));
+
+  const rows = siblingGroups.flatMap((g) => {
+    const allNames = g.kids.map((k) => k.fullName);
+
+    return g.kids.map((kid) => {
+      const siblings = allNames.filter((n) => n !== kid.fullName);
+      return {
+        registrantName: g.registrantName,
+        leagueChoice: g.leagueChoice,
+        playerId: kid.id,
+        playerName: kid.fullName,
+        siblingNames: siblings.join(", "),
+        draftCost: costByPlayerId[kid.id] ?? "",
+      };
+    });
+  });
 
   return NextResponse.json({
     draftEventId,
-    groups: siblingGroups.map((g) => ({
-      groupKey: g.groupKey,
-      draftCost: costByKey[g.groupKey] ?? null,
-      players: g.players,
-    })),
+    rows,
   });
 }

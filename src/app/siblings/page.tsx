@@ -3,35 +3,28 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 type Role = "ADMIN" | "BOARD" | "COACH" | "PARENT";
-
 type SessionUser = { id?: string; role?: Role } | null;
 
-type SiblingPlayer = {
-  id: string;
-  firstName: string;
-  lastName: string;
-  fullName: string;
-  primaryEmail: string | null;
-  primaryPhone: string | null;
-};
-
-type SiblingGroup = {
-  groupKey: string;
-  draftCost: number | null;
-  players: SiblingPlayer[];
+type SiblingRow = {
+  registrantName: string;
+  leagueChoice: string;
+  playerId: string;
+  playerName: string;
+  siblingNames: string; 
+  draftCost: string; 
 };
 
 type SiblingsResponse = {
   draftEventId: string;
-  groups: SiblingGroup[];
+  rows: SiblingRow[];
 };
 
 export default function SiblingsPage() {
   const [sessionUser, setSessionUser] = useState<SessionUser>(null);
   const [loading, setLoading] = useState(true);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
   const [q, setQ] = useState("");
-  const [groups, setGroups] = useState<SiblingGroup[]>([]);
+  const [rows, setRows] = useState<SiblingRow[]>([]);
   const [costEdits, setCostEdits] = useState<Record<string, string>>({});
 
   const canSave = sessionUser?.role === "ADMIN";
@@ -46,18 +39,16 @@ export default function SiblingsPage() {
     }
   }
 
-  async function loadGroups() {
+  async function loadRows() {
     setLoading(true);
     try {
       const res = await fetch("/api/draft/siblings", { cache: "no-store" });
       const json = (await res.json()) as SiblingsResponse;
-      const nextGroups = Array.isArray(json?.groups) ? json.groups : [];
-      setGroups(nextGroups);
+      const nextRows = Array.isArray(json?.rows) ? json.rows : [];
+      setRows(nextRows);
 
       const nextEdits: Record<string, string> = {};
-      for (const g of nextGroups) {
-        nextEdits[g.groupKey] = g.draftCost === null || g.draftCost === undefined ? "" : String(g.draftCost);
-      }
+      for (const r of nextRows) nextEdits[r.playerId] = r.draftCost ?? "";
       setCostEdits(nextEdits);
     } finally {
       setLoading(false);
@@ -66,40 +57,42 @@ export default function SiblingsPage() {
 
   useEffect(() => {
     loadSession();
-    loadGroups();
+    loadRows();
   }, []);
 
-  const filteredGroups = useMemo(() => {
+  const filteredRows = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return groups;
-    return groups.filter((g) => {
-      const key = (g.groupKey ?? "").toLowerCase();
-      if (key.includes(s)) return true;
-      return (g.players ?? []).some((p) => (p.fullName ?? "").toLowerCase().includes(s));
+    if (!s) return rows;
+    return rows.filter((r) => {
+      return (
+        (r.registrantName ?? "").toLowerCase().includes(s) ||
+        (r.playerName ?? "").toLowerCase().includes(s) ||
+        (r.siblingNames ?? "").toLowerCase().includes(s) ||
+        (r.leagueChoice ?? "").toLowerCase().includes(s)
+      );
     });
-  }, [groups, q]);
+  }, [rows, q]);
 
-  function setCostEdit(groupKey: string, value: string) {
-    setCostEdits((prev) => ({ ...prev, [groupKey]: value }));
+  function setCostEdit(playerId: string, value: string) {
+    setCostEdits((prev) => ({ ...prev, [playerId]: value }));
   }
 
-  async function saveCost(groupKey: string) {
+  async function saveCost(playerId: string) {
     if (!canSave) return;
 
-    setSavingKey(groupKey);
+    setSavingId(playerId);
     try {
-      const raw = (costEdits[groupKey] ?? "").trim();
-      const draftCost = raw === "" ? null : Number(raw);
+      const draftCost = (costEdits[playerId] ?? "").trim();
 
       await fetch("/api/draft/admin/siblings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ groupKey, draftCost }),
+        body: JSON.stringify({ playerId, draftCost }),
       });
 
-      await loadGroups();
+      await loadRows();
     } finally {
-      setSavingKey(null);
+      setSavingId(null);
     }
   }
 
@@ -108,7 +101,7 @@ export default function SiblingsPage() {
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-semibold tracking-tight">Siblings</h1>
         <div className="text-sm text-muted-foreground">
-          Automatically groups eligible players registered by the same person.
+          Shows U13 draft-eligible siblings registered by the same parent and in the same league.
         </div>
       </div>
 
@@ -116,82 +109,62 @@ export default function SiblingsPage() {
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search by parent email/phone or player..."
+          placeholder="Search by parent, player, sibling, or league..."
           className="w-full max-w-md rounded-md border px-3 py-2 text-sm"
         />
-        <button onClick={loadGroups} className="rounded-md border px-3 py-2 text-sm hover:bg-accent">
+        <button onClick={loadRows} className="rounded-md border px-3 py-2 text-sm hover:bg-accent">
           Refresh
         </button>
       </div>
 
       <div className="mt-6 rounded-xl border overflow-hidden">
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
-          <div className="col-span-4">Registrant</div>
-          <div className="col-span-6">Players</div>
+          <div className="col-span-3">Registrant</div>
+          <div className="col-span-2">League</div>
+          <div className="col-span-3">Player Name</div>
+          <div className="col-span-3">Sibling(s)</div>
           <div className="col-span-1 text-right">Draft Cost</div>
-          <div className="col-span-1 text-right">Save</div>
         </div>
 
         {loading ? (
           <div className="px-3 py-6 text-sm text-muted-foreground">Loading…</div>
-        ) : filteredGroups.length === 0 ? (
-          <div className="px-3 py-6 text-sm text-muted-foreground">No sibling groups found.</div>
+        ) : filteredRows.length === 0 ? (
+          <div className="px-3 py-6 text-sm text-muted-foreground">No sibling rows found.</div>
         ) : (
           <div className="divide-y">
-            {filteredGroups.map((g) => {
-              const players = g.players ?? [];
-              const uniqueCount = new Set(players.map((p) => p.id)).size;
-              const edit = costEdits[g.groupKey] ?? "";
-              const isSaving = savingKey === g.groupKey;
+            {filteredRows.map((r) => {
+              const edit = costEdits[r.playerId] ?? "";
+              const isSaving = savingId === r.playerId;
 
               return (
-                <div key={g.groupKey} className="px-3 py-3">
-                  <div className="grid grid-cols-12 gap-0 items-start">
-                    <div className="col-span-4">
-                      <div className="font-semibold break-words">{g.groupKey}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {uniqueCount} children (listed twice for draft cost)
-                      </div>
-                    </div>
+                <div key={r.playerId} className="grid grid-cols-12 gap-0 items-center px-3 py-2">
+                  <div className="col-span-3 text-sm font-semibold break-words">
+                    {r.registrantName || "Unknown"}
+                  </div>
+                  <div className="col-span-2 text-sm">{r.leagueChoice || ""}</div>
+                  <div className="col-span-3 text-sm">{r.playerName}</div>
+                  <div className="col-span-3 text-sm text-muted-foreground">{r.siblingNames}</div>
 
-                    <div className="col-span-6">
-                      <div className="grid gap-1">
-                        {players.map((p, idx) => (
-                          <div key={`${p.id}-${idx}`} className="text-sm">
-                            {p.fullName}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="col-span-1 flex justify-end">
-                      {canSave ? (
+                  <div className="col-span-1 flex justify-end gap-2">
+                    {canSave ? (
+                      <>
                         <input
-                          type="number"
                           value={edit}
-                          onChange={(e) => setCostEdit(g.groupKey, e.target.value)}
-                          className="w-20 rounded-md border px-2 py-1 text-sm text-right"
+                          onChange={(e) => setCostEdit(r.playerId, e.target.value)}
+                          placeholder="e.g. Next Pick"
+                          className="w-28 rounded-md border px-2 py-1 text-sm text-right"
                         />
-                      ) : (
-                        <div className="w-20 text-right text-sm text-muted-foreground">
-                          {g.draftCost === null || g.draftCost === undefined ? "" : g.draftCost}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="col-span-1 flex justify-end">
-                      {canSave ? (
                         <button
-                          onClick={() => saveCost(g.groupKey)}
+                          onClick={() => saveCost(r.playerId)}
                           disabled={isSaving}
                           className="rounded-md border px-2 py-1 text-xs hover:bg-accent disabled:opacity-60"
                         >
                           {isSaving ? "Saving…" : "Save"}
                         </button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground"></span>
-                      )}
-                    </div>
+                      </>
+                    ) : (
+                      <div className="text-sm text-right">{r.draftCost ?? ""}</div>
+                    )}
                   </div>
                 </div>
               );

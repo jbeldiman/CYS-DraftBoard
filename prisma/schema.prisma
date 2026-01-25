@@ -182,7 +182,7 @@ model DraftPlayer {
 
   picks         DraftPick[]
   siblingDraftCosts SiblingDraftCost[]
-  
+
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
@@ -223,7 +223,7 @@ model SiblingDraftCost {
 
   groupKey     String
 
-  draftCost    Int?
+  draftCost    String?
 
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
