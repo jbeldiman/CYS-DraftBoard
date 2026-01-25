@@ -54,7 +54,6 @@ export async function GET() {
   const groups: Record<string, typeof players> = {};
 
   for (const p of players) {
-    if (!p.isDraftEligible || !p.wantsU13) continue;
     const key = makeGroupKey(p);
     if (!key) continue;
     if (!groups[key]) groups[key] = [];
@@ -62,8 +61,12 @@ export async function GET() {
   }
 
   const siblingGroups = Object.entries(groups)
-    .filter(([, kids]) => kids.length > 1)
-    .map(([groupKey, kids]) => ({
+    .map(([groupKey, kids]) => {
+      const u13Eligible = kids.filter((k) => k.wantsU13 && k.isDraftEligible);
+      return { groupKey, kids, u13EligibleCount: u13Eligible.length };
+    })
+    .filter((g) => g.u13EligibleCount >= 2)
+    .map(({ groupKey, kids }) => ({
       groupKey,
       players: [...kids, ...kids].map((k) => ({
         id: k.id,
