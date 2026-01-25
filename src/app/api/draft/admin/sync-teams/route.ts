@@ -24,6 +24,14 @@ async function currentEventId() {
   return e.id;
 }
 
+function safeTeamName(name: string | null, email: string | null, fallback: string) {
+  const n = (name ?? "").trim();
+  if (n) return n;
+  const e = (email ?? "").trim();
+  if (e) return e;
+  return fallback;
+}
+
 export async function POST() {
   const session = await getServerSession(authOptions);
   if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -31,13 +39,11 @@ export async function POST() {
   try {
     const draftEventId = await currentEventId();
 
-
     const coaches = await prisma.user.findMany({
       where: { role: "COACH" },
       orderBy: { createdAt: "asc" },
       select: { id: true, name: true, email: true, createdAt: true },
     });
-
 
     await prisma.$transaction(async (tx) => {
       await tx.draftTeam.deleteMany({ where: { draftEventId } });
@@ -47,7 +53,7 @@ export async function POST() {
           data: coaches.map((c, idx) => ({
             draftEventId,
             order: idx + 1,
-            name: (c.name?.trim() || c.email.trim()) as string,
+            name: safeTeamName(c.name, c.email, `Coach ${idx + 1}`),
             coachUserId: c.id,
           })),
         });
