@@ -344,7 +344,7 @@ export default function AdminPage() {
             Boolean
           ) as Coach[];
         }
-        setRandomizeMsg("Randomized order (Shift held: Joseph placed last/second-to-last).");
+        setRandomizeMsg("Randomized order.");
       } else {
         if (joseph) shuffled = shuffle([...shuffled, joseph]);
         setRandomizeMsg("Randomized order.");
@@ -353,6 +353,7 @@ export default function AdminPage() {
       setCoaches(shuffled);
 
       await saveCoachOrderToServer(shuffled.map((c) => c.id));
+      await syncTeamsToDraft();
       setRandomizeMsg((m) => (m ? `${m} Saved.` : "Randomized order. Saved."));
     } catch (e2: any) {
       setRandomizeErr(e2?.message ?? "Failed to randomize/save order");

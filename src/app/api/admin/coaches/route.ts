@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
 
@@ -11,42 +10,114 @@ function isAdmin(session: any) {
 }
 
 export async function GET() {
-  const session = await getServerSession(authOptions);
-  if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  try {
+    const session = await getServerSession(authOptions);
+    if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const users = await prisma.user.findMany({
-    where: { role: "COACH" },
-    select: { id: true, name: true, email: true, createdAt: true },
-    orderBy: { createdAt: "desc" },
-  });
+    const users = await prisma.user.findMany({
+      where: { role: "COACH" },
+      orderBy: [{ coachOrder: "asc" }, { createdAt: "asc" }],
+      select: { id: true, name: true, email: true, createdAt: true, coachOrder: true },
+    });
 
-  return NextResponse.json({ users });
+    return NextResponse.json({ users });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Failed to load coaches" }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  try {
+    const session = await getServerSession(authOptions);
+    if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const body = await req.json().catch(() => null);
-  const name = (body?.name ?? "").toString().trim();
-  const email = (body?.email ?? "").toString().toLowerCase().trim();
-  const password = (body?.password ?? "").toString();
+    const body = await req.json().catch(() => ({}));
 
-  if (!email || !password) {
-    return NextResponse.json({ error: "Email and password required" }, { status: 400 });
+    const coachIds = Array.isArray(body?.coachIds) ? body.coachIds.map(String) : null;
+
+    if (coachIds && coachIds.length > 0) {
+      const found = await prisma.user.findMany({
+        where: { id: { in: coachIds }, role: "COACH" },
+        select: { id: true },
+      });
+
+      if (found.length !== coachIds.length) {
+        return NextResponse.json({ error: "One or more coachIds are invalid" }, { status: 400 });
+      }
+
+      await prisma.$transaction(
+        coachIds.map((id, idx) =>
+          prisma.user.update({
+            where: { id },
+            data: { coachOrder: idx + 1 },
+          })
+        )
+      );
+
+      return NextResponse.json({ ok: true, updated: coachIds.length });
+    }
+
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
+    const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const password = typeof body?.password === "string" ? body.password : "";
+
+    if (!email) return NextResponse.json({ error: "Email is required" }, { status: 400 });
+    if (!password) return NextResponse.json({ error: "Temporary password is required" }, { status: 400 });
+
+    const max = await prisma.user.aggregate({
+      where: { role: "COACH" },
+      _max: { coachOrder: true },
+    });
+
+    const nextOrder = (max._max.coachOrder ?? 0) + 1;
+
+    const passwordHash = password; 
+
+    const user = await prisma.user.create({
+      data: {
+        name: name || null,
+        email,
+        passwordHash,
+        role: "COACH",
+        coachOrder: nextOrder,
+      },
+      select: { id: true, name: true, email: true, createdAt: true, coachOrder: true },
+    });
+
+    return NextResponse.json({ ok: true, user });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Failed to create coach" }, { status: 500 });
   }
+}
 
-  const hashed = await bcrypt.hash(password, 12);
+export async function DELETE(req: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const user = await prisma.user.create({
-    data: {
-      name: name || null,
-      email,
-      passwordHash: hashed,
-      role: "COACH",
-    },
-    select: { id: true, name: true, email: true, role: true },
-  });
+    const { searchParams } = new URL(req.url);
+    const id = (searchParams.get("id") ?? "").trim();
+    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-  return NextResponse.json({ user });
+    await prisma.user.delete({ where: { id } });
+
+    const remaining = await prisma.user.findMany({
+      where: { role: "COACH" },
+      orderBy: [{ coachOrder: "asc" }, { createdAt: "asc" }],
+      select: { id: true },
+    });
+
+    await prisma.$transaction(
+      remaining.map((u, idx) =>
+        prisma.user.update({
+          where: { id: u.id },
+          data: { coachOrder: idx + 1 },
+        })
+      )
+    );
+
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message ?? "Failed to remove coach" }, { status: 500 });
+  }
 }

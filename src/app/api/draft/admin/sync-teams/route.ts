@@ -40,10 +40,10 @@ export async function POST() {
     const draftEventId = await currentEventId();
 
     const coaches = await prisma.user.findMany({
-      where: { role: "COACH" },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, name: true, email: true, createdAt: true },
-    });
+  where: { role: "COACH" },
+  orderBy: [{ coachOrder: "asc" }, { createdAt: "asc" }],
+  select: { id: true, name: true, email: true, createdAt: true, coachOrder: true },
+});
 
     await prisma.$transaction(async (tx) => {
       await tx.draftTeam.deleteMany({ where: { draftEventId } });
