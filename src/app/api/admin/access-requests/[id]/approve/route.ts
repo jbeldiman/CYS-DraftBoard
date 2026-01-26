@@ -13,6 +13,7 @@ function isAdminOrBoard(session: any) {
 export async function POST(req: Request, context: any) {
   try {
     const session = await getServerSession(authOptions);
+    if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (!isAdminOrBoard(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const requestId = String(context?.params?.id ?? "").trim();
@@ -21,7 +22,7 @@ export async function POST(req: Request, context: any) {
     const body = await req.json().catch(() => ({}));
     const decisionNotes = typeof body?.decisionNotes === "string" ? body.decisionNotes.trim() : "";
 
-    const meId = (session?.user as any)?.id ? String((session.user as any).id) : null;
+    const meId = (session.user as any)?.id ? String((session.user as any).id) : "";
     if (!meId) return NextResponse.json({ error: "Missing session user id" }, { status: 401 });
 
     const ar = await prisma.accessRequest.findUnique({
