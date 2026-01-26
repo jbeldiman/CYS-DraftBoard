@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 function pad2(n: number) {
   return n.toString().padStart(2, "0");
@@ -157,33 +157,26 @@ export default function DraftPage() {
 
 
   const [myTeamId, setMyTeamId] = useState<string | null>(null);
+const explicitTeamIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-
-    try {
-      const url = new URL(window.location.href);
-      const tid = url.searchParams.get("teamId");
-      if (tid) {
-        setMyTeamId(tid);
-        safeWriteJSON(MY_TEAM_ID_KEY, tid);
-        return;
-      }
-    } catch {
-
+useEffect(() => {
+  try {
+    const url = new URL(window.location.href);
+    const tid = url.searchParams.get("teamId");
+    if (tid) {
+      explicitTeamIdRef.current = tid;
+      setMyTeamId(tid);
+      safeWriteJSON(MY_TEAM_ID_KEY, tid);
+      return;
     }
+  } catch {}
 
-    try {
-      const tid = localStorage.getItem(MY_TEAM_ID_KEY);
-      if (tid) setMyTeamId(tid);
-    } catch {
+  try {
+    const tid = localStorage.getItem(MY_TEAM_ID_KEY);
+    if (tid) setMyTeamId(tid);
+  } catch {}
+}, []);
 
-    }
-  }, []);
 
   useEffect(() => {
 
@@ -201,16 +194,27 @@ export default function DraftPage() {
   }
 
   async function loadState() {
-    try {
-      const res = await fetch("/api/draft/state", { cache: "no-store" });
-      const json = (await res.json()) as DraftState;
-      setState(json);
-    } catch {
-      setState(null);
-    } finally {
-      setLoading(false);
+  try {
+    const res = await fetch("/api/draft/state", { cache: "no-store" });
+    const json = (await res.json()) as DraftState;
+    setState(json);
+
+    const role = (json as any)?.me?.role as string | undefined;
+    const autoTeamId = (json as any)?.myTeam?.id as string | undefined;
+
+    if (!explicitTeamIdRef.current && autoTeamId) {
+      setMyTeamId(autoTeamId);
+      safeWriteJSON(MY_TEAM_ID_KEY, autoTeamId);
+    } else if (!explicitTeamIdRef.current && role === "COACH" && !autoTeamId) {
+      setMyTeamId(null);
     }
+  } catch {
+    setState(null);
+  } finally {
+    setLoading(false);
   }
+}
+
 
   async function loadAllPicksOptional() {
     try {
@@ -478,11 +482,13 @@ export default function DraftPage() {
               <Pill tone="neutral">Status: {event?.phase ?? "SETUP"}</Pill>
               {isLive ? (
                 event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>
+              ) : (state?.me?.role === "COACH" ? (
+                <Pill tone="warn">No team assigned to this coach yet</Pill>
               ) : (
-                <Pill tone="neutral">Starts: {scheduledLabel}</Pill>
-              )}
+               <Pill tone="warn">Tip: add ?teamId=YOUR_TEAM_ID</Pill>
+              ))}
               {myTeamId ? (
-                <Pill tone="neutral">My TeamId: {myTeamId}</Pill>
+                <Pill tone="neutral">My Team: {state?.myTeam?.name ?? myTeamId}</Pill>
               ) : (
                 <Pill tone="warn">Tip: add ?teamId=YOUR_TEAM_ID</Pill>
               )}
