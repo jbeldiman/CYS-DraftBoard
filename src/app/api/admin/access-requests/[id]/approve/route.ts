@@ -10,13 +10,31 @@ function isAdminOrBoard(session: any) {
   return role === "ADMIN" || role === "BOARD";
 }
 
+function extractId(req: Request, context: any): string {
+  const fromParams = String(context?.params?.id ?? "").trim();
+  if (fromParams) return fromParams;
+
+  const u = new URL(req.url);
+  const parts = u.pathname.split("/").filter(Boolean);
+  const approveIdx = parts.lastIndexOf("approve");
+  if (approveIdx > 0) {
+    const candidate = String(parts[approveIdx - 1] ?? "").trim();
+    if (candidate && candidate !== "access-requests") return candidate;
+  }
+
+  const fromQuery = String(u.searchParams.get("id") ?? "").trim();
+  if (fromQuery) return fromQuery;
+
+  return "";
+}
+
 export async function POST(req: Request, context: any) {
   try {
     const session = await getServerSession(authOptions);
     if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (!isAdminOrBoard(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const requestId = String(context?.params?.id ?? "").trim();
+    const requestId = extractId(req, context);
     if (!requestId) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
