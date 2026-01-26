@@ -367,8 +367,45 @@ export default function AdminPage() {
 
   return (
     <main style={{ padding: 24, maxWidth: 980 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 800 }}>Admin</h1>
-      <p style={{ opacity: 0.8 }}>Upload registrations + run the draft.</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontSize: 28, fontWeight: 800, margin: 0 }}>Admin</h1>
+          <p style={{ opacity: 0.8, marginTop: 6 }}>Upload registrations + run the draft.</p>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <a
+            href="/admin/approvals"
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #222",
+              background: "#fff",
+              color: "#111",
+              fontWeight: 900,
+              textDecoration: "none",
+            }}
+          >
+            Approvals
+          </a>
+
+          <button
+            type="button"
+            onClick={bootstrap}
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #222",
+              background: "#111",
+              color: "white",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
 
       {err ? <div style={{ marginTop: 12, color: "crimson" }}>{err}</div> : null}
       {msg ? <div style={{ marginTop: 12, color: "green" }}>{msg}</div> : null}
