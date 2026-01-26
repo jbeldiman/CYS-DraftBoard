@@ -9,12 +9,12 @@ function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
 }
 
-export async function DELETE(_req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(authOptions);
     if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const id = String(ctx?.params?.id ?? "").trim();
+    const id = String(params?.id ?? "").trim();
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
     await prisma.user.delete({ where: { id } });
