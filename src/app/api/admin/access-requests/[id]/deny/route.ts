@@ -10,12 +10,12 @@ function isAdminOrBoard(session: any) {
   return role === "ADMIN" || role === "BOARD";
 }
 
-export async function POST(req: Request, ctx: { params: { id: string } }) {
+export async function POST(req: Request, context: any) {
   try {
     const session = await getServerSession(authOptions);
     if (!isAdminOrBoard(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const requestId = String(ctx?.params?.id ?? "").trim();
+    const requestId = String(context?.params?.id ?? "").trim();
     if (!requestId) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
     const body = await req.json().catch(() => ({}));
