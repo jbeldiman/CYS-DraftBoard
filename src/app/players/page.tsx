@@ -19,7 +19,10 @@ function Stars({ value }: { value: number | null }) {
       {Array.from({ length: 5 }).map((_, i) => (
         <span
           key={i}
-          className={cx("text-base leading-none", i < v ? "text-amber-500" : "text-muted-foreground/40")}
+          className={cx(
+            "text-base leading-none",
+            i < v ? "text-amber-500" : "text-muted-foreground/40"
+          )}
         >
           ★
         </span>
@@ -85,6 +88,17 @@ function extractRating(p: any): number | null {
   return null;
 }
 
+function isDraftedAny(p: any): boolean {
+  return !!(p?.draftedAt ?? p?.isDrafted ?? p?.drafted);
+}
+
+function isEligibleAny(p: any): boolean {
+  if (typeof p?.isDraftEligible === "boolean") return p.isDraftEligible;
+  if (typeof p?.eligible === "boolean") return p.eligible;
+  if (typeof p?.isEligible === "boolean") return p.isEligible;
+  return true; 
+}
+
 export default function PlayersPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -95,15 +109,18 @@ export default function PlayersPage() {
   async function load() {
     setErr(null);
     setLoading(true);
+
     try {
-      const res = await fetch("/api/draft/players?includeRatings=true", { cache: "no-store" });
+      const res = await fetch("/api/draft/players?eligible=true", { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
       const rows = (json.players ?? []) as any[];
 
-      const mapped: PlayerRow[] = rows.map((p) => ({
-        id: p.id,
-        fullName: p.fullName,
-        drafted: !!(p.draftedAt ?? p.isDrafted ?? p.drafted),
+      const eligibleRows = rows.filter((p) => isEligibleAny(p));
+
+      const mapped: PlayerRow[] = eligibleRows.map((p) => ({
+        id: String(p.id),
+        fullName: String(p.fullName ?? ""),
+        drafted: isDraftedAny(p),
         teamName: p.team?.name ?? p.draftedByTeam?.name ?? p.teamName ?? null,
         rating: extractRating(p),
       }));
@@ -133,8 +150,8 @@ export default function PlayersPage() {
       <div className="rounded-3xl border bg-card p-4 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Full Player List</h1>
-            <div className="text-sm text-muted-foreground">{players.length} total</div>
+            <h1 className="text-2xl font-semibold tracking-tight">Full Player List (Eligible Only)</h1>
+            <div className="text-sm text-muted-foreground">{players.length} players</div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -183,6 +200,7 @@ export default function PlayersPage() {
         )}
 
         <div className="mt-3 text-xs text-muted-foreground">
+          Data source: <span className="font-semibold">/api/draft/players?eligible=true</span>
         </div>
       </div>
     </div>
