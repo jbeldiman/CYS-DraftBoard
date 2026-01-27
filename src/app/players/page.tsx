@@ -183,7 +183,6 @@ export default function PlayersPage() {
         )}
 
         <div className="mt-3 text-xs text-muted-foreground">
-          Data source: <span className="font-semibold">/api/draft/players</span>
         </div>
       </div>
     </div>
