@@ -145,6 +145,34 @@ function snakeTeamIndexFromOverallPick(overallPick1: number, teamCount: number) 
   return { round, index, posInRound };
 }
 
+async function fetchTeamsFallback(): Promise<Array<{ id: string; name: string; order: number }>> {
+  try {
+    const res = await fetch("/api/admin/teams", { cache: "no-store" });
+    if (!res.ok) return [];
+    const json = await res.json().catch(() => ({} as any));
+    const teams = (json?.teams ?? json?.items ?? json ?? []) as any[];
+
+    if (!Array.isArray(teams)) return [];
+
+    const normalized = teams
+      .map((t) => {
+        const id = String(t?.id ?? "");
+        const name = String(t?.name ?? t?.teamName ?? "");
+        const orderRaw = t?.order ?? t?.draftOrder ?? t?.coachOrder ?? t?.sortOrder ?? null;
+        const order = typeof orderRaw === "number" ? orderRaw : Number(orderRaw);
+        if (!id || !name) return null;
+        return { id, name, order: Number.isFinite(order) ? order : 0 };
+      })
+      .filter(Boolean) as Array<{ id: string; name: string; order: number }>;
+
+    normalized.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+    return normalized;
+  } catch {
+    return [];
+  }
+}
+
 export default function DraftPage() {
   const fallbackScheduledTarget = useMemo(
     () => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
@@ -199,10 +227,21 @@ export default function DraftPage() {
     try {
       const res = await fetch("/api/draft/state", { cache: "no-store" });
       const json = (await res.json()) as DraftState;
-      setState(json);
 
-      const role = (json as any)?.me?.role as string | undefined;
-      const autoTeamId = (json as any)?.myTeam?.id as string | undefined;
+      let merged = json;
+
+      const teamsMissing = !Array.isArray(json?.teams) || json.teams.length === 0;
+      if (teamsMissing) {
+        const fallbackTeams = await fetchTeamsFallback();
+        if (fallbackTeams.length) {
+          merged = { ...json, teams: fallbackTeams };
+        }
+      }
+
+      setState(merged);
+
+      const role = (merged as any)?.me?.role as string | undefined;
+      const autoTeamId = (merged as any)?.myTeam?.id as string | undefined;
 
       if (!explicitTeamIdRef.current && autoTeamId) {
         setMyTeamId(autoTeamId);
@@ -508,7 +547,7 @@ export default function DraftPage() {
               ) : null}
 
               {isLive && teamCount === 0 ? (
-                <Pill tone="bad">No teams loaded (Admin must Sync Teams)</Pill>
+                <Pill tone="bad">No teams loaded</Pill>
               ) : null}
 
               {isLive && isMyTurn ? <Pill tone="good">It’s your turn</Pill> : null}
@@ -572,7 +611,9 @@ export default function DraftPage() {
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">Last Pick</div>
-                <div className="text-sm font-semibold truncate">{lastPick?.player.fullName ?? "—"}</div>
+                <div className="text-sm font-semibold truncate">
+                  {lastPick?.player.fullName ?? "—"}
+                </div>
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground truncate">
                     {lastPick?.team?.name ?? "—"}
@@ -773,7 +814,10 @@ export default function DraftPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Pill tone="neutral">{draftBoardPlayers.length}</Pill>
-                <button onClick={clearDraftBoard} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
+                <button
+                  onClick={clearDraftBoard}
+                  className="h-8 rounded-md border px-2 text-xs hover:bg-muted"
+                >
                   Clear
                 </button>
               </div>
