@@ -8,7 +8,6 @@ function pad2(n: number) {
 function cx(...v: Array<string | false | null | undefined>) {
   return v.filter(Boolean).join(" ");
 }
-
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
@@ -24,10 +23,7 @@ function Stars({ value }: { value: number | null }) {
       {Array.from({ length: 5 }).map((_, i) => (
         <span
           key={i}
-          className={cx(
-            "text-base leading-none",
-            i < v ? "text-amber-500" : "text-muted-foreground/40"
-          )}
+          className={cx("text-base leading-none", i < v ? "text-amber-500" : "text-muted-foreground/40")}
         >
           ★
         </span>
@@ -93,15 +89,9 @@ type DraftState = {
   recentPicks: DraftPick[];
   counts: { undrafted: number; drafted: number };
 
-  me?: {
-    role?: "ADMIN" | "BOARD" | "COACH" | "PARENT" | string;
-  };
+  me?: { role?: "ADMIN" | "BOARD" | "COACH" | "PARENT" | string };
 
-  myTeam?: {
-    id: string;
-    name: string;
-    order?: number;
-  };
+  myTeam?: { id: string; name: string; order?: number };
 };
 
 type RemainingPlayer = {
@@ -115,7 +105,6 @@ type DraftBoardEntry = {
   addedAt: number;
 };
 
-const DRAFT_BOARD_KEY = "cys.draftBoard.v1";
 const MY_TEAM_ID_KEY = "cys.myTeamId.v1";
 
 function safeReadJSON<T>(key: string, fallback: T): T {
@@ -151,7 +140,6 @@ async function fetchTeamsFallback(): Promise<Array<{ id: string; name: string; o
     if (!res.ok) return [];
     const json = await res.json().catch(() => ({} as any));
     const teams = (json?.teams ?? json?.items ?? json ?? []) as any[];
-
     if (!Array.isArray(teams)) return [];
 
     const normalized = teams
@@ -166,18 +154,112 @@ async function fetchTeamsFallback(): Promise<Array<{ id: string; name: string; o
       .filter(Boolean) as Array<{ id: string; name: string; order: number }>;
 
     normalized.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-
     return normalized;
   } catch {
     return [];
   }
 }
 
+function toNumberOrNull(v: any): number | null {
+  if (v == null) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function rankToStars(rank: number | null): number | null {
+  if (rank == null) return null;
+  if (rank <= 10) return 5;
+  if (rank <= 20) return 4;
+  if (rank <= 30) return 3;
+  if (rank <= 40) return 2;
+  return 1;
+}
+
+function extractRating(p: any): number | null {
+  const candidates = [
+    p?.rating,
+    p?.boardRating,
+    p?.playerRating,
+    p?.ratingValue,
+    p?.ratingStars,
+    p?.stars,
+    p?.spring2025Rating,
+    p?.fall2025Rating,
+    p?.springRating,
+    p?.fallRating,
+    p?.ratingSpring2025,
+    p?.ratingFall2025,
+  ];
+
+  for (const c of candidates) {
+    const n = toNumberOrNull(c);
+    if (n != null) return n;
+  }
+
+  const rank =
+    toNumberOrNull(p?.rank) ??
+    toNumberOrNull(p?.playerRank) ??
+    toNumberOrNull(p?.ratingRank) ??
+    toNumberOrNull(p?.overallRank) ??
+    null;
+
+  const starsFromRank = rankToStars(rank);
+  if (starsFromRank != null) return starsFromRank;
+
+  return null;
+}
+
+function draftBoardKeyForTeam(teamId: string | null) {
+  return `cys.draftBoard.v2.${teamId ?? "unknown"}`;
+}
+
+type ServerBoardPayload = {
+  entries: DraftBoardEntry[];
+};
+
+async function tryFetchBoardFromServer(teamId: string | null): Promise<{ ok: boolean; entries: DraftBoardEntry[] }> {
+  try {
+    const qs = teamId ? `?teamId=${encodeURIComponent(teamId)}` : "";
+    const res = await fetch(`/api/draft/board${qs}`, { cache: "no-store" });
+    if (res.status === 404) return { ok: false, entries: [] };
+    if (!res.ok) return { ok: false, entries: [] };
+    const json = (await res.json().catch(() => ({}))) as any;
+
+    const entries = (json?.entries ?? json?.board ?? json ?? []) as any[];
+    if (!Array.isArray(entries)) return { ok: true, entries: [] };
+
+    const normalized = entries
+      .map((e) => {
+        const playerId = String(e?.playerId ?? e?.id ?? "");
+        const addedAt = toNumberOrNull(e?.addedAt ?? e?.createdAt ?? Date.now()) ?? Date.now();
+        if (!playerId) return null;
+        return { playerId, addedAt } as DraftBoardEntry;
+      })
+      .filter(Boolean) as DraftBoardEntry[];
+
+    return { ok: true, entries: normalized };
+  } catch {
+    return { ok: false, entries: [] };
+  }
+}
+
+async function trySaveBoardToServer(teamId: string | null, entries: DraftBoardEntry[]): Promise<boolean> {
+  try {
+    const qs = teamId ? `?teamId=${encodeURIComponent(teamId)}` : "";
+    const res = await fetch(`/api/draft/board${qs}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entries } satisfies ServerBoardPayload),
+    });
+    if (res.status === 404) return false;
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export default function DraftPage() {
-  const fallbackScheduledTarget = useMemo(
-    () => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-    []
-  );
+  const fallbackScheduledTarget = useMemo(() => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)), []);
 
   const [now, setNow] = useState(() => new Date());
   const [state, setState] = useState<DraftState | null>(null);
@@ -194,6 +276,9 @@ export default function DraftPage() {
 
   const [myTeamId, setMyTeamId] = useState<string | null>(null);
   const explicitTeamIdRef = useRef<string | null>(null);
+
+  const serverBoardSupportedRef = useRef<boolean | null>(null);
+  const lastSavedBoardRef = useRef<string>("");
 
   useEffect(() => {
     try {
@@ -213,15 +298,47 @@ export default function DraftPage() {
     } catch {}
   }, []);
 
-  useEffect(() => {
-    const entries = safeReadJSON<DraftBoardEntry[]>(DRAFT_BOARD_KEY, []);
-    setDraftBoard(Array.isArray(entries) ? entries : []);
-  }, []);
+  async function loadDraftBoardForTeam(teamId: string | null) {
+    const localKey = draftBoardKeyForTeam(teamId);
 
-  function persistDraftBoard(next: DraftBoardEntry[]) {
-    setDraftBoard(next);
-    safeWriteJSON(DRAFT_BOARD_KEY, next);
+    if (serverBoardSupportedRef.current !== false) {
+      const server = await tryFetchBoardFromServer(teamId);
+      if (server.ok) {
+        serverBoardSupportedRef.current = true;
+        setDraftBoard(server.entries);
+        safeWriteJSON(localKey, server.entries);
+        lastSavedBoardRef.current = JSON.stringify(server.entries);
+        return;
+      }
+      if (serverBoardSupportedRef.current == null) serverBoardSupportedRef.current = false;
+    }
+
+    const entries = safeReadJSON<DraftBoardEntry[]>(localKey, []);
+    const normalized = Array.isArray(entries) ? entries : [];
+    setDraftBoard(normalized);
+    lastSavedBoardRef.current = JSON.stringify(normalized);
   }
+
+  function setDraftBoardAndPersist(next: DraftBoardEntry[], teamId: string | null) {
+    setDraftBoard(next);
+
+    const localKey = draftBoardKeyForTeam(teamId);
+    safeWriteJSON(localKey, next);
+
+    const serialized = JSON.stringify(next);
+    if (serialized === lastSavedBoardRef.current) return;
+    lastSavedBoardRef.current = serialized;
+
+    if (serverBoardSupportedRef.current === true) {
+      void trySaveBoardToServer(teamId, next).then((ok) => {
+        if (!ok) serverBoardSupportedRef.current = false;
+      });
+    }
+  }
+
+  useEffect(() => {
+    void loadDraftBoardForTeam(myTeamId);
+  }, [myTeamId]);
 
   async function loadState() {
     try {
@@ -233,9 +350,7 @@ export default function DraftPage() {
       const teamsMissing = !Array.isArray(json?.teams) || json.teams.length === 0;
       if (teamsMissing) {
         const fallbackTeams = await fetchTeamsFallback();
-        if (fallbackTeams.length) {
-          merged = { ...json, teams: fallbackTeams };
-        }
+        if (fallbackTeams.length) merged = { ...json, teams: fallbackTeams };
       }
 
       setState(merged);
@@ -268,33 +383,17 @@ export default function DraftPage() {
 
   async function loadRemaining() {
     try {
-      const res = await fetch("/api/draft/players?eligible=true&drafted=false", {
+      const res = await fetch("/api/draft/players?eligible=true&drafted=false&includeRatings=true", {
         cache: "no-store",
       });
       const json = await res.json().catch(() => ({}));
 
       setRemaining(
         (json.players ?? []).map((p: any) => {
-          const rawRating = p.rating ?? p.boardRating ?? p.playerRating ?? null;
-          const rank = p.rank ?? p.playerRank ?? null;
-
-          const ratingFromRank =
-            rank == null
-              ? null
-              : rank <= 10
-              ? 5
-              : rank <= 20
-              ? 4
-              : rank <= 30
-              ? 3
-              : rank <= 40
-              ? 2
-              : 1;
-
           return {
             id: p.id,
             fullName: p.fullName,
-            rating: rawRating ?? ratingFromRank,
+            rating: extractRating(p),
           } as RemainingPlayer;
         })
       );
@@ -326,7 +425,7 @@ export default function DraftPage() {
     const remainingIds = new Set(remaining.map((p) => p.id));
     const pruned = draftBoard.filter((e) => remainingIds.has(e.playerId));
     if (pruned.length !== draftBoard.length) {
-      persistDraftBoard(pruned);
+      setDraftBoardAndPersist(pruned, myTeamId);
     }
   }, [remaining]);
 
@@ -454,16 +553,16 @@ export default function DraftPage() {
   function addToDraftBoard(playerId: string) {
     if (isOnDraftBoard(playerId)) return;
     const next = [...draftBoard, { playerId, addedAt: Date.now() }];
-    persistDraftBoard(next);
+    setDraftBoardAndPersist(next, myTeamId);
   }
 
   function removeFromDraftBoard(playerId: string) {
     const next = draftBoard.filter((e) => e.playerId !== playerId);
-    persistDraftBoard(next);
+    setDraftBoardAndPersist(next, myTeamId);
   }
 
   function clearDraftBoard() {
-    persistDraftBoard([]);
+    setDraftBoardAndPersist([], myTeamId);
   }
 
   async function coachDraftPlayer(playerId: string) {
@@ -479,11 +578,7 @@ export default function DraftPage() {
 
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        const msg =
-          j?.error ??
-          (res.status === 404
-            ? "Missing endpoint: POST /api/draft/pick"
-            : "Failed to draft player");
+        const msg = j?.error ?? (res.status === 404 ? "Missing endpoint: POST /api/draft/pick" : "Failed to draft player");
         throw new Error(msg);
       }
 
@@ -498,11 +593,7 @@ export default function DraftPage() {
     }
   }
 
-  const teamHint = !myTeamId
-    ? role === "COACH"
-      ? "No team assigned to this coach yet"
-      : "Tip: add ?teamId=YOUR_TEAM_ID"
-    : null;
+  const teamHint = !myTeamId ? (role === "COACH" ? "No team assigned to this coach yet" : "Tip: add ?teamId=YOUR_TEAM_ID") : null;
 
   if (loading) {
     return (
@@ -528,34 +619,17 @@ export default function DraftPage() {
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-semibold tracking-tight">
-                {isLive ? "Draft Room" : "Draft Countdown"}
-              </h1>
+              <h1 className="text-2xl font-semibold tracking-tight">{isLive ? "Draft Room" : "Draft Countdown"}</h1>
               <Pill tone="neutral">Status: {event?.phase ?? "SETUP"}</Pill>
-              {isLive ? (
-                event?.isPaused ? (
-                  <Pill tone="warn">⏸ Paused</Pill>
-                ) : (
-                  <Pill tone="good">● Live</Pill>
-                )
-              ) : null}
-
+              {isLive ? (event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>) : null}
               {teamHint ? <Pill tone="warn">{teamHint}</Pill> : null}
-
-              {myTeamId ? (
-                <Pill tone="neutral">My Team: {state?.myTeam?.name ?? myTeamId}</Pill>
-              ) : null}
-
-              {isLive && teamCount === 0 ? (
-                <Pill tone="bad">No teams loaded</Pill>
-              ) : null}
-
+              {myTeamId ? <Pill tone="neutral">My Team: {state?.myTeam?.name ?? myTeamId}</Pill> : null}
+              {isLive && teamCount === 0 ? <Pill tone="bad">No teams loaded</Pill> : null}
               {isLive && isMyTurn ? <Pill tone="good">It’s your turn</Pill> : null}
             </div>
 
             <div className="mt-1 text-sm text-muted-foreground">
-              {event?.name ?? "CYS Draft"} · Remaining:{" "}
-              {state?.counts?.undrafted ?? remaining.length} · Drafted:{" "}
+              {event?.name ?? "CYS Draft"} · Remaining: {state?.counts?.undrafted ?? remaining.length} · Drafted:{" "}
               {state?.counts?.drafted ?? 0}
             </div>
 
@@ -583,19 +657,13 @@ export default function DraftPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">Current Pick</div>
-                <div className="text-lg font-semibold tabular-nums">
-                  #{event?.currentPick ?? 1}
-                </div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {onClockTeam?.name ?? (teamCount ? "—" : "No teams")}
-                </div>
+                <div className="text-lg font-semibold tabular-nums">#{event?.currentPick ?? 1}</div>
+                <div className="text-xs text-muted-foreground truncate">{onClockTeam?.name ?? (teamCount ? "—" : "No teams")}</div>
               </div>
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">On Deck</div>
-                <div className="text-lg font-semibold truncate">
-                  {onDeckTeam?.name ?? (teamCount ? "—" : "No teams")}
-                </div>
+                <div className="text-lg font-semibold truncate">{onDeckTeam?.name ?? (teamCount ? "—" : "No teams")}</div>
                 <div className="text-xs text-muted-foreground">Next up</div>
               </div>
 
@@ -604,35 +672,15 @@ export default function DraftPage() {
                 <div className="text-lg font-bold tabular-nums">
                   {pad2(liveMin)}:{pad2(liveSec)}
                 </div>
-                <div className="text-xs text-muted-foreground">
-                  {event?.isPaused ? "Paused" : "Time left"}
-                </div>
+                <div className="text-xs text-muted-foreground">{event?.isPaused ? "Paused" : "Time left"}</div>
               </div>
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">Last Pick</div>
-                <div className="text-sm font-semibold truncate">
-                  {lastPick?.player.fullName ?? "—"}
-                </div>
+                <div className="text-sm font-semibold truncate">{lastPick?.player.fullName ?? "—"}</div>
                 <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground truncate">
-                    {lastPick?.team?.name ?? "—"}
-                  </span>
-                  <Stars
-                    value={
-                      lastPick?.player?.rank == null
-                        ? null
-                        : lastPick.player.rank <= 10
-                        ? 5
-                        : lastPick.player.rank <= 20
-                        ? 4
-                        : lastPick.player.rank <= 30
-                        ? 3
-                        : lastPick.player.rank <= 40
-                        ? 2
-                        : 1
-                    }
-                  />
+                  <span className="text-xs text-muted-foreground truncate">{lastPick?.team?.name ?? "—"}</span>
+                  <Stars value={rankToStars(lastPick?.player?.rank ?? null)} />
                 </div>
               </div>
             </div>
@@ -646,10 +694,7 @@ export default function DraftPage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-sm font-semibold">My Roster</div>
-            <div className="text-xs text-muted-foreground">
-              Populates automatically from picks for your team
-              {!myTeamId ? " (missing teamId)" : ""}
-            </div>
+            <div className="text-xs text-muted-foreground">Populates automatically from picks for your team{!myTeamId ? " (missing teamId)" : ""}</div>
           </div>
           <div className="flex items-center gap-2">
             <Pill tone="neutral">{myRoster.length} players</Pill>
@@ -658,8 +703,7 @@ export default function DraftPage() {
 
         {!myTeamId ? (
           <div className="mt-3 text-sm text-muted-foreground">
-            Add <span className="font-semibold">?teamId=</span> to the URL (or set{" "}
-            <span className="font-semibold">{MY_TEAM_ID_KEY}</span> in localStorage) to enable roster.
+            Add <span className="font-semibold">?teamId=</span> to the URL (or set <span className="font-semibold">{MY_TEAM_ID_KEY}</span> in localStorage) to enable roster.
           </div>
         ) : myRoster.length === 0 ? (
           <div className="mt-3 text-sm text-muted-foreground">No picks yet.</div>
@@ -671,31 +715,15 @@ export default function DraftPage() {
               <div className="col-span-2 text-right">Pick</div>
             </div>
             <div className="divide-y">
-              {myRoster.map((p) => {
-                const rating =
-                  p.player.rank == null
-                    ? null
-                    : p.player.rank <= 10
-                    ? 5
-                    : p.player.rank <= 20
-                    ? 4
-                    : p.player.rank <= 30
-                    ? 3
-                    : p.player.rank <= 40
-                    ? 2
-                    : 1;
-                return (
-                  <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm">
-                    <div className="col-span-7 font-semibold truncate">{p.player.fullName}</div>
-                    <div className="col-span-3 flex items-center">
-                      <Stars value={rating} />
-                    </div>
-                    <div className="col-span-2 text-right text-xs text-muted-foreground tabular-nums">
-                      #{p.overallNumber}
-                    </div>
+              {myRoster.map((p) => (
+                <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm">
+                  <div className="col-span-7 font-semibold truncate">{p.player.fullName}</div>
+                  <div className="col-span-3 flex items-center">
+                    <Stars value={rankToStars(p.player.rank)} />
                   </div>
-                );
-              })}
+                  <div className="col-span-2 text-right text-xs text-muted-foreground tabular-nums">#{p.overallNumber}</div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -708,18 +736,12 @@ export default function DraftPage() {
               <div>
                 <div className="text-sm font-semibold">Eligible Players</div>
                 <div className="text-xs text-muted-foreground">
-                  Showing <span className="font-semibold">{filteredRemaining.length}</span> of{" "}
-                  <span className="font-semibold">{remaining.length}</span>
+                  Showing <span className="font-semibold">{filteredRemaining.length}</span> of <span className="font-semibold">{remaining.length}</span>
                   {isLive ? " · Drafting enabled when it’s your turn" : " · Build your draft board now"}
                 </div>
               </div>
 
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Search…"
-                className="h-9 w-52 rounded-md border px-3 text-sm"
-              />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search…" className="h-9 w-52 rounded-md border px-3 text-sm" />
             </div>
 
             <div className="mt-3 rounded-2xl border overflow-hidden">
@@ -738,10 +760,7 @@ export default function DraftPage() {
                     const canDraft = isLive && isMyTurn && !draftBusy && teamCount > 0;
 
                     return (
-                      <div
-                        key={p.id}
-                        className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition"
-                      >
+                      <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition">
                         <div className="col-span-6 font-semibold truncate">{p.fullName}</div>
 
                         <div className="col-span-3 flex items-center">
@@ -750,17 +769,11 @@ export default function DraftPage() {
 
                         <div className="col-span-3 flex items-center justify-end gap-2">
                           {!onBoard ? (
-                            <button
-                              onClick={() => addToDraftBoard(p.id)}
-                              className="h-8 rounded-md border px-2 text-xs hover:bg-muted"
-                            >
+                            <button onClick={() => addToDraftBoard(p.id)} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
                               Add to Draft Board
                             </button>
                           ) : (
-                            <button
-                              onClick={() => removeFromDraftBoard(p.id)}
-                              className="h-8 rounded-md border px-2 text-xs hover:bg-muted"
-                            >
+                            <button onClick={() => removeFromDraftBoard(p.id)} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
                               Remove
                             </button>
                           )}
@@ -770,9 +783,7 @@ export default function DraftPage() {
                             onClick={() => coachDraftPlayer(p.id)}
                             className={cx(
                               "h-8 rounded-md px-3 text-xs border",
-                              canDraft
-                                ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
-                                : "bg-muted text-muted-foreground"
+                              canDraft ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700" : "bg-muted text-muted-foreground"
                             )}
                             title={
                               teamCount === 0
@@ -799,8 +810,7 @@ export default function DraftPage() {
             </div>
 
             <div className="mt-3 text-xs text-muted-foreground">
-              Data source:{" "}
-              <span className="font-semibold">/api/draft/players?eligible=true&amp;drafted=false</span>
+              Data source: <span className="font-semibold">/api/draft/players?eligible=true&amp;drafted=false</span>
             </div>
           </div>
         </div>
@@ -810,23 +820,20 @@ export default function DraftPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold">My Draft Board</div>
-                <div className="text-xs text-muted-foreground">Players you’ve highlighted</div>
+                <div className="text-xs text-muted-foreground">
+                  {serverBoardSupportedRef.current === true ? "Saved to backend" : "Saved locally (backend endpoint missing)"}
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <Pill tone="neutral">{draftBoardPlayers.length}</Pill>
-                <button
-                  onClick={clearDraftBoard}
-                  className="h-8 rounded-md border px-2 text-xs hover:bg-muted"
-                >
+                <button onClick={clearDraftBoard} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
                   Clear
                 </button>
               </div>
             </div>
 
             {draftBoardPlayers.length === 0 ? (
-              <div className="mt-4 text-sm text-muted-foreground">
-                Add players from the Eligible list to build your board.
-              </div>
+              <div className="mt-4 text-sm text-muted-foreground">Add players from the Eligible list to build your board.</div>
             ) : (
               <div className="mt-3 rounded-2xl border overflow-hidden">
                 <div className="grid grid-cols-12 bg-muted px-3 py-2 text-xs font-semibold">
@@ -839,19 +846,13 @@ export default function DraftPage() {
                   {draftBoardPlayers.map((p) => {
                     const canDraft = isLive && isMyTurn && !draftBusy && teamCount > 0;
                     return (
-                      <div
-                        key={p.id}
-                        className="grid grid-cols-12 px-3 py-2 text-sm hover:bg-muted/40 transition"
-                      >
+                      <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm hover:bg-muted/40 transition">
                         <div className="col-span-7 font-semibold truncate">{p.fullName}</div>
                         <div className="col-span-3 flex items-center">
                           <Stars value={p.rating} />
                         </div>
                         <div className="col-span-2 flex justify-end gap-2">
-                          <button
-                            onClick={() => removeFromDraftBoard(p.id)}
-                            className="h-8 rounded-md border px-2 text-xs hover:bg-muted"
-                          >
+                          <button onClick={() => removeFromDraftBoard(p.id)} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
                             ✕
                           </button>
                           <button
@@ -859,9 +860,7 @@ export default function DraftPage() {
                             onClick={() => coachDraftPlayer(p.id)}
                             className={cx(
                               "h-8 rounded-md px-2 text-xs border",
-                              canDraft
-                                ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
-                                : "bg-muted text-muted-foreground"
+                              canDraft ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700" : "bg-muted text-muted-foreground"
                             )}
                             title={
                               teamCount === 0
@@ -888,7 +887,7 @@ export default function DraftPage() {
             )}
 
             <div className="mt-3 text-xs text-muted-foreground">
-              Saved locally in <span className="font-semibold">{DRAFT_BOARD_KEY}</span>
+              Key: <span className="font-semibold">{draftBoardKeyForTeam(myTeamId)}</span>
             </div>
           </div>
         </div>

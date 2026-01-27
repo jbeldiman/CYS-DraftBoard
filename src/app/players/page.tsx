@@ -1,63 +1,125 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  formatPlayerHistoryNarrative,
-  getPlayerHistory,
-  type PlayerDraftHistoryEntry,
-} from "@/lib/playerHistory";
-import { PlayerHistoryProvider, usePlayerHistoryIndex } from "@/components/PlayerHistoryProvider";
 
-type Role = "ADMIN" | "BOARD" | "COACH" | "PARENT";
+function cx(...v: Array<string | false | null | undefined>) {
+  return v.filter(Boolean).join(" ");
+}
+function clamp(n: number, lo: number, hi: number) {
+  return Math.max(lo, Math.min(hi, n));
+}
+function Stars({ value }: { value: number | null }) {
+  const v = value == null ? 0 : clamp(Math.round(value), 0, 5);
+  return (
+    <div
+      className="flex items-center gap-0.5"
+      aria-label={value == null ? "No rating" : `${v} out of 5`}
+      title={value == null ? "No rating" : `${v} / 5`}
+    >
+      {Array.from({ length: 5 }).map((_, i) => (
+        <span
+          key={i}
+          className={cx("text-base leading-none", i < v ? "text-amber-500" : "text-muted-foreground/40")}
+        >
+          ★
+        </span>
+      ))}
+    </div>
+  );
+}
 
-type Player = {
+type PlayerRow = {
   id: string;
   fullName: string;
-  notes: string | null;
-  experience: string | null;
-  fall2025Rating: number | null;
-  isDrafted: boolean;
-  draftedTeam: { name: string; order: number } | null;
+  drafted: boolean;
+  teamName: string | null;
+  rating: number | null;
 };
 
-type SessionUser = { id?: string; role?: Role } | null;
+function toNumberOrNull(v: any): number | null {
+  if (v == null) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 
-function PlayersPageInner() {
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [sessionUser, setSessionUser] = useState<SessionUser>(null);
-  const [savingId, setSavingId] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+function rankToStars(rank: number | null): number | null {
+  if (rank == null) return null;
+  if (rank <= 10) return 5;
+  if (rank <= 20) return 4;
+  if (rank <= 30) return 3;
+  if (rank <= 40) return 2;
+  return 1;
+}
 
-  const { index: historyIndex } = usePlayerHistoryIndex();
+function extractRating(p: any): number | null {
+  const candidates = [
+    p?.rating,
+    p?.boardRating,
+    p?.playerRating,
+    p?.ratingValue,
+    p?.ratingStars,
+    p?.stars,
+    p?.spring2025Rating,
+    p?.fall2025Rating,
+    p?.springRating,
+    p?.fallRating,
+    p?.ratingSpring2025,
+    p?.ratingFall2025,
+  ];
 
-  const canSave = sessionUser?.role === "ADMIN";
-
-  async function loadSession() {
-    try {
-      const res = await fetch("/api/auth/session", { cache: "no-store" });
-      const json = await res.json();
-      setSessionUser(json?.user ?? null);
-    } catch {
-      setSessionUser(null);
-    }
+  for (const c of candidates) {
+    const n = toNumberOrNull(c);
+    if (n != null) return n;
   }
 
-  async function loadPlayers() {
+  const rank =
+    toNumberOrNull(p?.rank) ??
+    toNumberOrNull(p?.playerRank) ??
+    toNumberOrNull(p?.ratingRank) ??
+    toNumberOrNull(p?.overallRank) ??
+    null;
+
+  const starsFromRank = rankToStars(rank);
+  if (starsFromRank != null) return starsFromRank;
+
+  return null;
+}
+
+export default function PlayersPage() {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [players, setPlayers] = useState<PlayerRow[]>([]);
+  const [q, setQ] = useState("");
+
+  async function load() {
+    setErr(null);
     setLoading(true);
     try {
-      const res = await fetch("/api/draft/players?eligible=true", { cache: "no-store" });
-      const json = await res.json();
-      setPlayers(json.players ?? []);
+      const res = await fetch("/api/draft/players?includeRatings=true", { cache: "no-store" });
+      const json = await res.json().catch(() => ({}));
+      const rows = (json.players ?? []) as any[];
+
+      const mapped: PlayerRow[] = rows.map((p) => ({
+        id: p.id,
+        fullName: p.fullName,
+        drafted: !!(p.draftedAt ?? p.isDrafted ?? p.drafted),
+        teamName: p.team?.name ?? p.draftedByTeam?.name ?? p.teamName ?? null,
+        rating: extractRating(p),
+      }));
+
+      mapped.sort((a, b) => (a.fullName ?? "").localeCompare(b.fullName ?? ""));
+      setPlayers(mapped);
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to load players");
+      setPlayers([]);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    loadSession();
-    loadPlayers();
+    load();
   }, []);
 
   const filtered = useMemo(() => {
@@ -66,182 +128,64 @@ function PlayersPageInner() {
     return players.filter((p) => (p.fullName ?? "").toLowerCase().includes(s));
   }, [players, q]);
 
-  function setField(id: string, patch: Partial<Player>) {
-    setPlayers((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-  }
-
-  async function saveRow(p: Player) {
-    if (!canSave) return;
-    setSavingId(p.id);
-    try {
-      await fetch("/api/draft/admin/players", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          players: [
-            {
-              id: p.id,
-              rank: null,
-              notes: p.notes ?? null,
-              experience: (p.experience ?? "").toString(),
-              fall2025Rating: p.fall2025Rating ?? null,
-              spring2025Rating: null,
-            },
-          ],
-        }),
-      });
-      await loadPlayers();
-    } finally {
-      setSavingId(null);
-    }
-  }
-
-  function historyFor(p: Player): PlayerDraftHistoryEntry[] {
-    return getPlayerHistory(historyIndex, p.fullName);
-  }
-
   return (
-    <div className="py-8">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Full Eligible Players</h1>
-        <div className="text-sm text-muted-foreground">
-          Players born 12/01/2012 – 12/31/2016 with U13 selected.
-        </div>
-      </div>
+    <div className="py-4 space-y-4">
+      <div className="rounded-3xl border bg-card p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Full Player List</h1>
+            <div className="text-sm text-muted-foreground">{players.length} total</div>
+          </div>
 
-      <div className="mt-6 flex items-center gap-3">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search player..."
-          className="w-full max-w-md rounded-md border px-3 py-2 text-sm"
-        />
-        <button onClick={loadPlayers} className="rounded-md border px-3 py-2 text-sm hover:bg-accent">
-          Refresh
-        </button>
-      </div>
-
-      <div className="mt-6 rounded-xl border overflow-hidden">
-        <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
-          <div className="col-span-3">Player</div>
-          <div className="col-span-1">Rating</div>
-          <div className="col-span-7">Parent&apos;s Comment</div>
-          <div className="col-span-1 text-right">Save</div>
+          <div className="flex items-center gap-2">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search…"
+              className="h-9 w-56 rounded-md border px-3 text-sm"
+            />
+            <button onClick={load} className="h-9 rounded-md border px-3 text-sm hover:bg-muted">
+              Refresh
+            </button>
+          </div>
         </div>
+
+        {err ? <div className="mt-3 text-sm text-rose-600">{err}</div> : null}
 
         {loading ? (
-          <div className="px-3 py-6 text-sm text-muted-foreground">Loading…</div>
-        ) : filtered.length === 0 ? (
-          <div className="px-3 py-6 text-sm text-muted-foreground">No eligible players found.</div>
+          <div className="mt-4 text-sm text-muted-foreground">Loading…</div>
         ) : (
-          <div className="divide-y">
-            {filtered.map((p) => {
-              const expanded = expandedId === p.id;
-              const h = historyFor(p);
+          <div className="mt-4 rounded-2xl border overflow-hidden">
+            <div className="grid grid-cols-12 bg-muted px-3 py-2 text-xs font-semibold">
+              <div className="col-span-5">Player</div>
+              <div className="col-span-3">Rating</div>
+              <div className="col-span-2">Drafted</div>
+              <div className="col-span-2">Team</div>
+            </div>
 
-              const narrative = h.length
-                ? formatPlayerHistoryNarrative({
-                    playerFullName: p.fullName,
-                    history: h,
-                    ratings: {
-                      fall2025: p.fall2025Rating ?? null,
-                    },
-                  })
-                : "";
-
-              const parentComment = (p.notes ?? "").trim() || (p.experience ?? "").trim();
-
-              return (
-                <div key={p.id}>
-                  <div className="grid grid-cols-12 gap-0 px-3 py-3 text-sm items-center">
-                    <div className="col-span-3">
-                      <button
-                        type="button"
-                        onClick={() => setExpandedId((cur) => (cur === p.id ? null : p.id))}
-                        className="font-semibold hover:underline text-left"
-                      >
-                        {p.fullName}
-                      </button>
+            {filtered.length === 0 ? (
+              <div className="px-3 py-6 text-sm text-muted-foreground">No matches.</div>
+            ) : (
+              <div className="divide-y max-h-[75vh] overflow-auto">
+                {filtered.map((p) => (
+                  <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm hover:bg-muted/40 transition">
+                    <div className="col-span-5 font-semibold truncate">{p.fullName}</div>
+                    <div className="col-span-3 flex items-center">
+                      <Stars value={p.rating} />
                     </div>
-
-                    <div className="col-span-1">
-                      {canSave ? (
-                        <input
-                          type="number"
-                          value={p.fall2025Rating ?? ""}
-                          onChange={(e) =>
-                            setField(p.id, {
-                              fall2025Rating: e.target.value === "" ? null : Number(e.target.value),
-                            })
-                          }
-                          className="w-full rounded-md border px-2 py-1 text-sm"
-                        />
-                      ) : (
-                        <div className="text-muted-foreground">{p.fall2025Rating ?? ""}</div>
-                      )}
-                    </div>
-
-                    <div className="col-span-7">
-                      <div className="text-muted-foreground whitespace-pre-wrap break-words">
-                        {parentComment}
-                      </div>
-                    </div>
-
-                    <div className="col-span-1 flex justify-end">
-                      {canSave ? (
-                        <button
-                          onClick={() => saveRow(p)}
-                          disabled={savingId === p.id}
-                          className="rounded-md border px-2 py-1 text-xs hover:bg-accent disabled:opacity-60"
-                        >
-                          {savingId === p.id ? "Saving…" : "Save"}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground"></span>
-                      )}
-                    </div>
+                    <div className="col-span-2 text-xs text-muted-foreground">{p.drafted ? "Yes" : "No"}</div>
+                    <div className="col-span-2 text-xs text-muted-foreground truncate">{p.teamName ?? "—"}</div>
                   </div>
-
-                  {expanded ? (
-                    <div className="px-3 pb-4">
-                      <div className="rounded-lg border bg-background p-3 text-sm">
-                        <div className="font-semibold">Previous Draft History</div>
-
-                        {h.length ? (
-                          <>
-                            {narrative ? <div className="mt-1 text-muted-foreground">{narrative}</div> : null}
-                            <div className="mt-3 grid gap-2">
-                              {h.map((e, idx) => (
-                                <div
-                                  key={`${e.season}-${e.year}-${e.overallPick}-${idx}`}
-                                  className="text-muted-foreground"
-                                >
-                                  {e.year} {e.seasonLabel}: drafted {e.overallPick} overall (Round {e.round}, Pick{" "}
-                                  {e.pickInRound}) by {e.teamName}
-                                </div>
-                              ))}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="mt-1 text-muted-foreground">No prior draft history found.</div>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                ))}
+              </div>
+            )}
           </div>
         )}
+
+        <div className="mt-3 text-xs text-muted-foreground">
+          Data source: <span className="font-semibold">/api/draft/players</span>
+        </div>
       </div>
     </div>
-  );
-}
-
-export default function PlayersPage() {
-  return (
-    <PlayerHistoryProvider>
-      <PlayersPageInner />
-    </PlayerHistoryProvider>
   );
 }
