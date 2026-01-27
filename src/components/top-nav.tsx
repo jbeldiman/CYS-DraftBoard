@@ -49,7 +49,6 @@ export default function TopNav({ session }: { session: NavSession | null }) {
     { href: "/draft", label: "Draft Board" },
     { href: "/live-draft", label: "Live Draft" },
     { href: "/players", label: "Eligible Players" },
-    { href: "/remaining-players", label: "Remaining" },
     { href: "/rosters", label: "My Roster" },
     { href: "/siblings", label: "Siblings" },
   ];
