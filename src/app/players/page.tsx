@@ -148,13 +148,31 @@ function PlayersPageInner() {
     loadPlayers();
   }, []);
 
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return players;
-    return players.filter((p) =>
-      (p.fullName ?? "").toLowerCase().includes(s)
-    );
-  }, [players, q]);
+ const filtered = useMemo(() => {
+  const s = q.trim().toLowerCase();
+
+  const list = s
+    ? players.filter((p) =>
+        (p.fullName ?? "").toLowerCase().includes(s)
+      )
+    : players;
+
+  return [...list].sort((a, b) => {
+    const ra = a.spring2026Rating;
+    const rb = b.spring2026Rating;
+
+
+    if (ra == null && rb == null) {
+      return a.fullName.localeCompare(b.fullName);
+    }
+    if (ra == null) return 1;   
+    if (rb == null) return -1;  
+    if (rb !== ra) return rb - ra;
+
+   
+    return a.fullName.localeCompare(b.fullName);
+  });
+}, [players, q]);
 
   function setField(id: string, patch: Partial<Player>) {
     setPlayers((prev) =>
