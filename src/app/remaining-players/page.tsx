@@ -6,7 +6,10 @@ import {
   getPlayerHistory,
   type PlayerDraftHistoryEntry,
 } from "@/lib/playerHistory";
-import { PlayerHistoryProvider, usePlayerHistoryIndex } from "@/components/PlayerHistoryProvider";
+import {
+  PlayerHistoryProvider,
+  usePlayerHistoryIndex,
+} from "@/components/PlayerHistoryProvider";
 
 type Role = "ADMIN" | "BOARD" | "COACH" | "PARENT";
 
@@ -16,14 +19,6 @@ type Player = {
   notes: string | null;
   experience: string | null;
   fall2025Rating: number | null;
-
-  draftedAt?: string | null;
-  drafted?: boolean;
-  isDrafted?: boolean;
-
-  eligible?: boolean;
-  isEligible?: boolean;
-  isDraftEligible?: boolean;
 };
 
 type SessionUser = { id?: string; role?: Role } | null;
@@ -34,7 +29,6 @@ function cx(...v: Array<string | false | null | undefined>) {
 function clamp(n: number, lo: number, hi: number) {
   return Math.max(lo, Math.min(hi, n));
 }
-
 function Stars({ value }: { value: number | null }) {
   const v = value == null ? 0 : clamp(Math.round(value), 0, 5);
   return (
@@ -101,17 +95,8 @@ function stableHash(players: any[]) {
         id: p.id,
         fullName: p.fullName,
         experience: p.experience ?? null,
-        fall2025Rating: p.fall2025Rating ?? p.rating ?? null,
+        fall2025Rating: p.fall2025Rating ?? null,
         notes: p.notes ?? null,
-        drafted: !!(p.draftedAt ?? p.isDrafted ?? p.drafted),
-        eligible:
-          typeof p.isDraftEligible === "boolean"
-            ? p.isDraftEligible
-            : typeof p.eligible === "boolean"
-            ? p.eligible
-            : typeof p.isEligible === "boolean"
-            ? p.isEligible
-            : null,
       }))
     );
   } catch {
@@ -150,33 +135,26 @@ function RemainingPlayersInner() {
     setErr(null);
 
     try {
-      const res = await fetch("/api/draft/players?eligible=true&drafted=false", {
-        cache: "no-store",
-      });
-
+      const res = await fetch(
+        "/api/draft/players?eligible=true&drafted=false",
+        { cache: "no-store" }
+      );
       const json = await res.json().catch(() => ({}));
       const raw = Array.isArray(json?.players) ? json.players : [];
 
-      const eligibleOnly = raw
+      const remaining = raw
         .filter((p: any) => !isDraftedAny(p))
         .filter((p: any) => isEligibleAny(p));
 
-      const nextPlayers: Player[] = eligibleOnly.map((p: any) => ({
+      const nextPlayers: Player[] = remaining.map((p: any) => ({
         id: String(p.id),
         fullName: String(p.fullName ?? ""),
         notes: (p.notes ?? null) as string | null,
         experience: (p.experience ?? null) as string | null,
         fall2025Rating: extractFallRating(p),
-        draftedAt: p.draftedAt ?? null,
-        drafted: !!p.drafted,
-        isDrafted: !!p.isDrafted,
-        eligible: typeof p.eligible === "boolean" ? p.eligible : undefined,
-        isEligible: typeof p.isEligible === "boolean" ? p.isEligible : undefined,
-        isDraftEligible: typeof p.isDraftEligible === "boolean" ? p.isDraftEligible : undefined,
       }));
 
       const nextHash = stableHash(nextPlayers);
-
       if (nextHash !== lastHashRef.current) {
         lastHashRef.current = nextHash;
         setPlayers(nextPlayers);
@@ -203,16 +181,21 @@ function RemainingPlayersInner() {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return players;
-    return players.filter((p) => (p.fullName ?? "").toLowerCase().includes(s));
+    return players.filter((p) =>
+      (p.fullName ?? "").toLowerCase().includes(s)
+    );
   }, [players, q]);
 
   function setField(id: string, patch: Partial<Player>) {
-    setPlayers((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+    setPlayers((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, ...patch } : p))
+    );
   }
 
   async function saveRow(p: Player) {
     if (!canSave) return;
     setSavingId(p.id);
+    setErr(null);
     try {
       const res = await fetch("/api/draft/admin/players", {
         method: "POST",
@@ -251,8 +234,12 @@ function RemainingPlayersInner() {
   return (
     <div className="py-8">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">Eligible Players</h1>
-        <div className="text-sm text-muted-foreground">Only eligible + undrafted. Auto-updates during the live draft.</div>
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Remaining Players
+        </h1>
+        <div className="text-sm text-muted-foreground">
+          Auto-updates during the live draft.
+        </div>
       </div>
 
       <div className="mt-6 flex items-center gap-3">
@@ -262,7 +249,10 @@ function RemainingPlayersInner() {
           placeholder="Search player..."
           className="w-full max-w-md rounded-md border px-3 py-2 text-sm"
         />
-        <button onClick={() => loadPlayers(false)} className="rounded-md border px-3 py-2 text-sm hover:bg-accent">
+        <button
+          onClick={() => loadPlayers(false)}
+          className="rounded-md border px-3 py-2 text-sm hover:bg-accent"
+        >
           Refresh
         </button>
       </div>
@@ -278,9 +268,13 @@ function RemainingPlayersInner() {
         </div>
 
         {loading ? (
-          <div className="px-3 py-6 text-sm text-muted-foreground">Loading…</div>
+          <div className="px-3 py-6 text-sm text-muted-foreground">
+            Loading…
+          </div>
         ) : filtered.length === 0 ? (
-          <div className="px-3 py-6 text-sm text-muted-foreground">No eligible remaining players.</div>
+          <div className="px-3 py-6 text-sm text-muted-foreground">
+            No remaining players.
+          </div>
         ) : (
           <div className="divide-y">
             {filtered.map((p) => {
@@ -291,11 +285,14 @@ function RemainingPlayersInner() {
                 ? formatPlayerHistoryNarrative({
                     playerFullName: p.fullName,
                     history: h,
-                    ratings: { fall2025: p.fall2025Rating ?? null },
+                    ratings: {
+                      fall2025: p.fall2025Rating ?? null,
+                    },
                   })
                 : "";
 
-              const parentComment = (p.notes ?? "").trim() || (p.experience ?? "").trim();
+              const parentComment =
+                (p.notes ?? "").trim() || (p.experience ?? "").trim();
 
               return (
                 <div key={p.id}>
@@ -303,7 +300,9 @@ function RemainingPlayersInner() {
                     <div className="col-span-3">
                       <button
                         type="button"
-                        onClick={() => setExpandedId((cur) => (cur === p.id ? null : p.id))}
+                        onClick={() =>
+                          setExpandedId((cur) => (cur === p.id ? null : p.id))
+                        }
                         className="font-semibold hover:underline text-left"
                       >
                         {p.fullName}
@@ -322,7 +321,10 @@ function RemainingPlayersInner() {
                             value={p.fall2025Rating ?? ""}
                             onChange={(e) =>
                               setField(p.id, {
-                                fall2025Rating: e.target.value === "" ? null : Number(e.target.value),
+                                fall2025Rating:
+                                  e.target.value === ""
+                                    ? null
+                                    : Number(e.target.value),
                               })
                             }
                             className="w-16 rounded-md border px-2 py-1 text-sm"
@@ -333,7 +335,9 @@ function RemainingPlayersInner() {
                     </div>
 
                     <div className="col-span-6">
-                      <div className="text-muted-foreground whitespace-pre-wrap break-words">{parentComment}</div>
+                      <div className="text-muted-foreground whitespace-pre-wrap break-words">
+                        {parentComment}
+                      </div>
                     </div>
 
                     <div className="col-span-1 flex justify-end">
@@ -354,22 +358,34 @@ function RemainingPlayersInner() {
                   {expanded ? (
                     <div className="px-3 pb-4">
                       <div className="rounded-lg border bg-background p-3 text-sm">
-                        <div className="font-semibold">Previous Draft History</div>
+                        <div className="font-semibold">
+                          Previous Draft History
+                        </div>
 
                         {h.length ? (
                           <>
-                            {narrative ? <div className="mt-1 text-muted-foreground">{narrative}</div> : null}
+                            {narrative ? (
+                              <div className="mt-1 text-muted-foreground">
+                                {narrative}
+                              </div>
+                            ) : null}
                             <div className="mt-3 grid gap-2">
                               {h.map((e, idx) => (
-                                <div key={`${e.season}-${e.year}-${e.overallPick}-${idx}`} className="text-muted-foreground">
-                                  {e.year} {e.seasonLabel}: drafted {e.overallPick} overall (Round {e.round}, Pick{" "}
-                                  {e.pickInRound}) by {e.teamName}
+                                <div
+                                  key={`${e.season}-${e.year}-${e.overallPick}-${idx}`}
+                                  className="text-muted-foreground"
+                                >
+                                  {e.year} {e.seasonLabel}: drafted{" "}
+                                  {e.overallPick} overall (Round {e.round},
+                                  Pick {e.pickInRound}) by {e.teamName}
                                 </div>
                               ))}
                             </div>
                           </>
                         ) : (
-                          <div className="mt-1 text-muted-foreground">No prior draft history found.</div>
+                          <div className="mt-1 text-muted-foreground">
+                            No prior draft history found.
+                          </div>
                         )}
                       </div>
                     </div>
