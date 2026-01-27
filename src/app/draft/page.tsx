@@ -84,13 +84,25 @@ type DraftState = {
     clockEndsAt: string | null;
     pauseRemainingSecs: number | null;
   } | null;
+
   teams: {
     id: string;
     name: string;
     order: number;
   }[];
+
   recentPicks: DraftPick[];
   counts: { undrafted: number; drafted: number };
+
+  me?: {
+    role?: "ADMIN" | "BOARD" | "COACH" | "PARENT" | string;
+  };
+
+  myTeam?: {
+    id: string;
+    name: string;
+    order?: number;
+  };
 };
 
 type RemainingPlayer = {
