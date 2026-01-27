@@ -19,13 +19,14 @@ async function resolveEventId() {
   return event.id;
 }
 
-function deriveRatingFromRank(rank: number | null | undefined): number | null {
-  if (rank == null) return null;
-  if (rank <= 10) return 5;
-  if (rank <= 20) return 4;
-  if (rank <= 30) return 3;
-  if (rank <= 40) return 2;
-  return 1;
+function toRating(v: any): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return null;
+  const t = Math.trunc(n);
+  if (t < 1) return 1;
+  if (t > 5) return 5;
+  return t;
 }
 
 export async function GET(req: Request) {
@@ -78,8 +79,12 @@ export async function GET(req: Request) {
         primaryEmail: true,
         experience: true,
         rank: true,
+
+
         spring2025Rating: true,
         fall2025Rating: true,
+        spring2026Rating: true,
+
         notes: true,
         isDraftEligible: true,
         isDrafted: true,
@@ -90,24 +95,21 @@ export async function GET(req: Request) {
     });
 
     const players = rows.map((p) => {
-      const raw =
-        typeof p.fall2025Rating === "number"
-          ? p.fall2025Rating
-          : typeof p.spring2025Rating === "number"
-            ? p.spring2025Rating
-            : null;
-
-      const rating = raw ?? deriveRatingFromRank(p.rank);
+      const spring2026Rating = toRating(p.spring2026Rating);
 
       return {
         ...p,
-        rating,
+        spring2026Rating,
+        rating: spring2026Rating,
       };
     });
 
     return NextResponse.json({ draftEventId, players });
   } catch (e) {
     console.error(e);
-    return NextResponse.json({ error: "Failed to load players" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to load players" },
+      { status: 500 }
+    );
   }
 }
