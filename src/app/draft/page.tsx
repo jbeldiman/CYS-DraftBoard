@@ -637,7 +637,7 @@ export default function DraftPage() {
               <Pill tone="neutral">Status: {event?.phase ?? "SETUP"}</Pill>
               {isLive ? (event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>) : null}
               {teamHint ? <Pill tone="warn">{teamHint}</Pill> : null}
-              {myTeamId ? <Pill tone="neutral">My Team: {state?.myTeam?.name ?? myTeamId}</Pill> : null}
+              
               {isLive && teamCount === 0 ? <Pill tone="bad">No teams loaded</Pill> : null}
               {isLive && isMyTurn ? <Pill tone="good">It’s your turn</Pill> : null}
             </div>
@@ -824,7 +824,6 @@ export default function DraftPage() {
             </div>
 
             <div className="mt-3 text-xs text-muted-foreground">
-              Data source: <span className="font-semibold">/api/draft/players?eligible=true&amp;drafted=false</span>
             </div>
           </div>
         </div>
@@ -901,7 +900,6 @@ export default function DraftPage() {
             )}
 
             <div className="mt-3 text-xs text-muted-foreground">
-              Key: <span className="font-semibold">{draftBoardKeyForTeam(myTeamId)}</span>
             </div>
           </div>
         </div>
