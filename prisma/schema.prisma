@@ -172,7 +172,7 @@ model DraftPlayer {
   experience       String?
   fall2025Rating   Int?
   spring2025Rating Int?
-
+  spring2026Rating Int?
   notes          String?
   rank           Int?
 

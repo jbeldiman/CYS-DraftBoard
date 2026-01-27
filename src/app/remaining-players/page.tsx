@@ -18,7 +18,7 @@ type Player = {
   fullName: string;
   notes: string | null;
   experience: string | null;
-  fall2025Rating: number | null;
+  spring2026Rating: number | null;
 };
 
 type SessionUser = { id?: string; role?: Role } | null;
@@ -52,31 +52,6 @@ function Stars({ value }: { value: number | null }) {
   );
 }
 
-function toNumberOrNull(v: any): number | null {
-  if (v == null) return null;
-  const n = typeof v === "number" ? v : Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
-function extractFallRating(p: any): number | null {
-  const candidates = [
-    p?.fall2025Rating,
-    p?.rating,
-    p?.boardRating,
-    p?.playerRating,
-    p?.ratingValue,
-    p?.ratingStars,
-    p?.stars,
-    p?.ratingFall2025,
-    p?.fallRating,
-  ];
-  for (const c of candidates) {
-    const n = toNumberOrNull(c);
-    if (n != null) return n;
-  }
-  return null;
-}
-
 function isDraftedAny(p: any): boolean {
   return !!(p?.draftedAt ?? p?.isDrafted ?? p?.drafted);
 }
@@ -88,6 +63,21 @@ function isEligibleAny(p: any): boolean {
   return true;
 }
 
+function toNumberOrNull(v: any): number | null {
+  if (v == null) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractSpring2026Rating(p: any): number | null {
+  const n = toNumberOrNull(p?.spring2026Rating);
+  if (n == null) return null;
+  const t = Math.trunc(n);
+  if (t < 1) return 1;
+  if (t > 5) return 5;
+  return t;
+}
+
 function stableHash(players: any[]) {
   try {
     return JSON.stringify(
@@ -95,7 +85,7 @@ function stableHash(players: any[]) {
         id: p.id,
         fullName: p.fullName,
         experience: p.experience ?? null,
-        fall2025Rating: p.fall2025Rating ?? null,
+        spring2026Rating: p.spring2026Rating ?? null,
         notes: p.notes ?? null,
       }))
     );
@@ -151,7 +141,7 @@ function RemainingPlayersInner() {
         fullName: String(p.fullName ?? ""),
         notes: (p.notes ?? null) as string | null,
         experience: (p.experience ?? null) as string | null,
-        fall2025Rating: extractFallRating(p),
+        spring2026Rating: extractSpring2026Rating(p),
       }));
 
       const nextHash = stableHash(nextPlayers);
@@ -204,11 +194,9 @@ function RemainingPlayersInner() {
           players: [
             {
               id: p.id,
-              rank: null,
               notes: p.notes ?? null,
               experience: (p.experience ?? "").toString(),
-              fall2025Rating: p.fall2025Rating ?? null,
-              spring2025Rating: null,
+              spring2026Rating: p.spring2026Rating ?? null,
             },
           ],
         }),
@@ -262,7 +250,7 @@ function RemainingPlayersInner() {
       <div className="mt-6 rounded-xl border overflow-hidden">
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
           <div className="col-span-3">Player</div>
-          <div className="col-span-2">Rating</div>
+          <div className="col-span-2">Rating (Spring 2026)</div>
           <div className="col-span-6">Parent&apos;s Comment</div>
           <div className="col-span-1 text-right">Save</div>
         </div>
@@ -285,9 +273,7 @@ function RemainingPlayersInner() {
                 ? formatPlayerHistoryNarrative({
                     playerFullName: p.fullName,
                     history: h,
-                    ratings: {
-                      fall2025: p.fall2025Rating ?? null,
-                    },
+                    ratings: {},
                   })
                 : "";
 
@@ -311,24 +297,24 @@ function RemainingPlayersInner() {
 
                     <div className="col-span-2">
                       <div className="flex items-center gap-2">
-                        <Stars value={p.fall2025Rating} />
+                        <Stars value={p.spring2026Rating ?? null} />
                         {canSave ? (
                           <input
                             type="number"
-                            min={0}
+                            min={1}
                             max={5}
                             step={1}
-                            value={p.fall2025Rating ?? ""}
+                            value={p.spring2026Rating ?? ""}
                             onChange={(e) =>
                               setField(p.id, {
-                                fall2025Rating:
+                                spring2026Rating:
                                   e.target.value === ""
                                     ? null
                                     : Number(e.target.value),
                               })
                             }
                             className="w-16 rounded-md border px-2 py-1 text-sm"
-                            aria-label="Rating (0-5)"
+                            aria-label="Rating (1-5)"
                           />
                         ) : null}
                       </div>

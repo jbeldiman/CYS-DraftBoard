@@ -32,18 +32,14 @@ function boolParam(v: string | null) {
   return null;
 }
 
-function computeRating(p: { fall2025Rating: number | null; spring2025Rating: number | null; rank: number | null }) {
-  const direct = p.fall2025Rating ?? p.spring2025Rating;
-  if (direct != null) return Math.max(1, Math.min(5, Math.trunc(direct)));
-
-  const r = p.rank;
-  if (r == null) return null;
-
-  if (r <= 10) return 5;
-  if (r <= 20) return 4;
-  if (r <= 30) return 3;
-  if (r <= 40) return 2;
-  return 1;
+function clampRating(v: any): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return null;
+  const t = Math.trunc(n);
+  if (t < 1) return 1;
+  if (t > 5) return 5;
+  return t;
 }
 
 export async function GET(req: Request) {
@@ -66,24 +62,19 @@ export async function GET(req: Request) {
         fullName: true,
         jerseySize: true,
         rank: true,
-        fall2025Rating: true,
-        spring2025Rating: true,
+        spring2026Rating: true,
         isDraftEligible: true,
         isDrafted: true,
       },
     });
-
 
     const out = players.map((p) => ({
       id: p.id,
       fullName: p.fullName,
       jerseySize: p.jerseySize,
       rank: p.rank,
-      rating: computeRating({
-        fall2025Rating: p.fall2025Rating,
-        spring2025Rating: p.spring2025Rating,
-        rank: p.rank,
-      }),
+      spring2026Rating: p.spring2026Rating ?? null,
+      rating: p.spring2026Rating ?? null, 
       isDraftEligible: p.isDraftEligible,
       isDrafted: p.isDrafted,
     }));
@@ -92,6 +83,49 @@ export async function GET(req: Request) {
   } catch (err: any) {
     return NextResponse.json(
       { error: err?.message ? String(err.message) : "Failed to load players" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!isAdmin(session)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const body = await req.json().catch(() => ({}));
+    const players = Array.isArray(body?.players) ? body.players : [];
+    if (!players.length) {
+      return NextResponse.json({ error: "No players provided" }, { status: 400 });
+    }
+
+    const draftEventId = await currentEvent();
+
+    
+    await prisma.$transaction(
+      players.map((p: any) => {
+        const id = String(p?.id ?? "");
+        if (!id) throw new Error("Missing player id");
+
+        const spring2026Rating = clampRating(p?.spring2026Rating);
+
+        return prisma.draftPlayer.updateMany({
+          where: { id, draftEventId },
+          data: {
+            spring2026Rating,
+            notes: p?.notes ?? null,
+            experience: p?.experience ?? null,
+          },
+        });
+      })
+    );
+
+    return NextResponse.json({ ok: true });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err?.message ? String(err.message) : "Save failed" },
       { status: 500 }
     );
   }

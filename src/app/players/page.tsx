@@ -18,7 +18,9 @@ type Player = {
   fullName: string;
   notes: string | null;
   experience: string | null;
-  fall2025Rating: number | null;
+
+  spring2026Rating: number | null;
+
   isDrafted: boolean;
   draftedTeam: { name: string; order: number } | null;
 
@@ -67,34 +69,26 @@ function toNumberOrNull(v: any): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function extractFallRating(p: any): number | null {
-  const candidates = [
-    p?.fall2025Rating,
-    p?.rating,
-    p?.boardRating,
-    p?.playerRating,
-    p?.ratingValue,
-    p?.ratingStars,
-    p?.stars,
-    p?.ratingFall2025,
-    p?.fallRating,
-  ];
-  for (const c of candidates) {
-    const n = toNumberOrNull(c);
-    if (n != null) return n;
-  }
-  return null;
+function extractSpring2026Rating(p: any): number | null {
+  const n = toNumberOrNull(p?.spring2026Rating);
+  if (n == null) return null;
+  const t = Math.trunc(n);
+  if (t < 1) return 1;
+  if (t > 5) return 5;
+  return t;
 }
 
 function normalizePlayers(rows: any[]): Player[] {
   return (rows ?? []).map((p: any) => {
-    const fall = extractFallRating(p);
+    const spring = extractSpring2026Rating(p);
     return {
       id: String(p.id),
       fullName: String(p.fullName ?? ""),
       notes: (p.notes ?? null) as string | null,
       experience: (p.experience ?? null) as string | null,
-      fall2025Rating: fall,
+
+      spring2026Rating: spring,
+
       isDrafted: !!(p?.isDrafted ?? p?.drafted ?? p?.draftedAt),
       draftedTeam: (p?.draftedTeam ??
         (p?.team
@@ -179,11 +173,9 @@ function PlayersPageInner() {
           players: [
             {
               id: p.id,
-              rank: null,
               notes: p.notes ?? null,
               experience: (p.experience ?? "").toString(),
-              fall2025Rating: p.fall2025Rating ?? null,
-              spring2025Rating: null,
+              spring2026Rating: p.spring2026Rating ?? null,
             },
           ],
         }),
@@ -227,7 +219,7 @@ function PlayersPageInner() {
       <div className="mt-6 rounded-xl border overflow-hidden">
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
           <div className="col-span-3">Player</div>
-          <div className="col-span-2">Rating</div>
+          <div className="col-span-2">Rating (Spring 2026)</div>
           <div className="col-span-6">Parent&apos;s Comment</div>
           <div className="col-span-1 text-right">Save</div>
         </div>
@@ -250,9 +242,7 @@ function PlayersPageInner() {
                 ? formatPlayerHistoryNarrative({
                     playerFullName: p.fullName,
                     history: h,
-                    ratings: {
-                      fall2025: p.fall2025Rating ?? null,
-                    },
+                    ratings: {},
                   })
                 : "";
 
@@ -276,25 +266,25 @@ function PlayersPageInner() {
 
                     <div className="col-span-2">
                       <div className="flex items-center gap-2">
-                        <Stars value={p.fall2025Rating ?? null} />
+                        <Stars value={p.spring2026Rating ?? null} />
                         {canSave ? (
                           <input
                             type="number"
-                            min={0}
+                            min={1}
                             max={5}
                             step={1}
-                            value={p.fall2025Rating ?? ""}
+                            value={p.spring2026Rating ?? ""}
                             onChange={(e) => {
                               const raw = e.target.value;
                               const n = raw === "" ? null : Number(raw);
                               setField(p.id, {
-                                fall2025Rating: Number.isFinite(n as any)
+                                spring2026Rating: Number.isFinite(n as any)
                                   ? (n as number | null)
                                   : null,
                               });
                             }}
                             className="w-16 rounded-md border px-2 py-1 text-sm"
-                            aria-label="Rating (0-5)"
+                            aria-label="Rating (1-5)"
                           />
                         ) : null}
                       </div>
