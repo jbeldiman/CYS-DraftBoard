@@ -36,7 +36,11 @@ function normalize(s: string) {
 function isJosephBeldiman(c: Coach) {
   const n = normalize(c.name ?? "");
   const e = normalize(c.email ?? "");
-  return n === "joseph beldiman" || e === "joseph.beldiman@flocksafety.com" || e === "jbeldiman@flocksafety.com";
+  return (
+    n === "joseph beldiman" ||
+    e === "joseph.beldiman@flocksafety.com" ||
+    e === "jbeldiman@flocksafety.com"
+  );
 }
 
 export default function AdminPage() {
@@ -72,11 +76,12 @@ export default function AdminPage() {
   const [randomizeErr, setRandomizeErr] = useState<string | null>(null);
 
   const [removingCoachId, setRemovingCoachId] = useState<string | null>(null);
+  const [startingDraft, setStartingDraft] = useState(false);
 
   async function loadCoaches() {
     const res = await fetch("/api/admin/coaches", { cache: "no-store" });
     if (!res.ok) throw new Error("Failed to load coaches (are you logged in as ADMIN?)");
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
     setCoaches(json.users ?? []);
   }
 
@@ -153,25 +158,64 @@ export default function AdminPage() {
     }
   }
 
+  async function doSyncTeams(opts?: { silent?: boolean }) {
+    if (!opts?.silent) {
+      setTeamsMsg(null);
+      setTeamsErr(null);
+    }
+    setSyncingTeams(true);
+    try {
+      const res = await fetch("/api/draft/admin/sync-teams", { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message = json?.error ?? "Failed to sync teams";
+        if (!opts?.silent) setTeamsErr(message);
+        throw new Error(message);
+      }
+
+      const count = (json?.teams?.length ?? 0) as number;
+      if (!opts?.silent) setTeamsMsg(`Synced ${count} teams into the draft.`);
+      await loadDraftState();
+      return count;
+    } finally {
+      setSyncingTeams(false);
+    }
+  }
+
   async function startDraft() {
     setMsg(null);
     setErr(null);
+    setTeamsMsg(null);
+    setTeamsErr(null);
+    setStartingDraft(true);
 
-    const res = await fetch("/api/draft/admin/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pickClockSeconds }),
-    });
+    try {
+      const teamCount = await doSyncTeams({ silent: true });
+      if (!teamCount || teamCount <= 0) {
+        setErr("No teams were synced into the draft. Create coaches and try Sync Teams again.");
+        return;
+      }
 
-    const json = await res.json().catch(() => ({}));
+      const res = await fetch("/api/draft/admin/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pickClockSeconds }),
+      });
 
-    if (!res.ok) {
-      setErr(json?.error ?? "Failed to start draft");
-      return;
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setErr(json?.error ?? "Failed to start draft");
+        return;
+      }
+
+      setMsg(`Draft started. Teams synced: ${teamCount}.`);
+      await loadDraftState();
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to start draft");
+    } finally {
+      setStartingDraft(false);
     }
-
-    setMsg("Draft started.");
-    await loadDraftState();
   }
 
   async function togglePause() {
@@ -287,20 +331,12 @@ export default function AdminPage() {
   }
 
   async function syncTeamsToDraft() {
-    setTeamsMsg(null);
-    setTeamsErr(null);
-    setSyncingTeams(true);
+    setMsg(null);
+    setErr(null);
     try {
-      const res = await fetch("/api/draft/admin/sync-teams", { method: "POST" });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setTeamsErr(json?.error ?? "Failed to sync teams");
-        return;
-      }
-      setTeamsMsg(`Synced ${json?.teams?.length ?? 0} teams into the draft.`);
-      await loadDraftState();
-    } finally {
-      setSyncingTeams(false);
+      await doSyncTeams({ silent: false });
+    } catch {
+      // errors already surfaced
     }
   }
 
@@ -340,9 +376,11 @@ export default function AdminPage() {
         if (placeLast) {
           shuffled = [...shuffled, joseph];
         } else {
-          shuffled = [...shuffled.slice(0, Math.max(0, shuffled.length - 1)), joseph, shuffled[shuffled.length - 1]].filter(
-            Boolean
-          ) as Coach[];
+          shuffled = [
+            ...shuffled.slice(0, Math.max(0, shuffled.length - 1)),
+            joseph,
+            shuffled[shuffled.length - 1],
+          ].filter(Boolean) as Coach[];
         }
         setRandomizeMsg("Randomized order.");
       } else {
@@ -546,7 +584,8 @@ export default function AdminPage() {
         </div>
 
         <div style={{ opacity: 0.8, fontSize: 13 }}>
-          Ratings CSV format: <b>Column A</b> = Player Full Name, <b>Column B</b> = Rating (number). Names must match closely.
+          Ratings CSV format: <b>Column A</b> = Player Full Name, <b>Column B</b> = Rating (number). Names must match
+          closely.
         </div>
 
         <input
@@ -601,17 +640,19 @@ export default function AdminPage() {
           <button
             type="button"
             onClick={startDraft}
+            disabled={startingDraft || syncingTeams}
             style={{
               padding: 10,
               borderRadius: 8,
               border: "1px solid #222",
-              background: "#111",
+              background: startingDraft || syncingTeams ? "#888" : "#111",
               color: "white",
               fontWeight: 800,
               maxWidth: 220,
+              cursor: startingDraft || syncingTeams ? "not-allowed" : "pointer",
             }}
           >
-            Start Draft
+            {startingDraft ? "Starting…" : "Start Draft"}
           </button>
 
           <button

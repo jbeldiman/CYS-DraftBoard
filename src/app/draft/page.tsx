@@ -61,7 +61,6 @@ function Pill({
   );
 }
 
-/** --- Types pulled from your existing pages --- */
 type DraftPick = {
   id: string;
   overallNumber: number;
@@ -131,13 +130,11 @@ function safeReadJSON<T>(key: string, fallback: T): T {
 function safeWriteJSON(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-   
-  }
+  } catch {}
 }
 
 function snakeTeamIndexFromOverallPick(overallPick1: number, teamCount: number) {
-  if (teamCount <= 0) return { round: 1, index: 0 };
+  if (teamCount <= 0) return { round: 1, index: 0, posInRound: 0 };
   const p0 = overallPick1 - 1;
   const round = Math.floor(p0 / teamCount) + 1;
   const posInRound = p0 % teamCount;
@@ -167,37 +164,30 @@ export default function DraftPage() {
   const [draftErr, setDraftErr] = useState<string | null>(null);
   const [draftBusy, setDraftBusy] = useState<string | null>(null);
 
-
   const [myTeamId, setMyTeamId] = useState<string | null>(null);
-const explicitTeamIdRef = useRef<string | null>(null);
-
-useEffect(() => {
-  try {
-    const url = new URL(window.location.href);
-    const tid = url.searchParams.get("teamId");
-    if (tid) {
-      explicitTeamIdRef.current = tid;
-      setMyTeamId(tid);
-      safeWriteJSON(MY_TEAM_ID_KEY, tid);
-      return;
-    }
-  } catch {}
-
-  try {
-    const tid = localStorage.getItem(MY_TEAM_ID_KEY);
-    if (tid) setMyTeamId(tid);
-  } catch {}
-}, []);
-
+  const explicitTeamIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const tid = url.searchParams.get("teamId");
+      if (tid) {
+        explicitTeamIdRef.current = tid;
+        setMyTeamId(tid);
+        safeWriteJSON(MY_TEAM_ID_KEY, tid);
+        return;
+      }
+    } catch {}
 
     try {
-      const entries = safeReadJSON<DraftBoardEntry[]>(DRAFT_BOARD_KEY, []);
-      setDraftBoard(Array.isArray(entries) ? entries : []);
-    } catch {
-      setDraftBoard([]);
-    }
+      const tid = localStorage.getItem(MY_TEAM_ID_KEY);
+      if (tid) setMyTeamId(tid);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    const entries = safeReadJSON<DraftBoardEntry[]>(DRAFT_BOARD_KEY, []);
+    setDraftBoard(Array.isArray(entries) ? entries : []);
   }, []);
 
   function persistDraftBoard(next: DraftBoardEntry[]) {
@@ -206,27 +196,26 @@ useEffect(() => {
   }
 
   async function loadState() {
-  try {
-    const res = await fetch("/api/draft/state", { cache: "no-store" });
-    const json = (await res.json()) as DraftState;
-    setState(json);
+    try {
+      const res = await fetch("/api/draft/state", { cache: "no-store" });
+      const json = (await res.json()) as DraftState;
+      setState(json);
 
-    const role = (json as any)?.me?.role as string | undefined;
-    const autoTeamId = (json as any)?.myTeam?.id as string | undefined;
+      const role = (json as any)?.me?.role as string | undefined;
+      const autoTeamId = (json as any)?.myTeam?.id as string | undefined;
 
-    if (!explicitTeamIdRef.current && autoTeamId) {
-      setMyTeamId(autoTeamId);
-      safeWriteJSON(MY_TEAM_ID_KEY, autoTeamId);
-    } else if (!explicitTeamIdRef.current && role === "COACH" && !autoTeamId) {
-      setMyTeamId(null);
+      if (!explicitTeamIdRef.current && autoTeamId) {
+        setMyTeamId(autoTeamId);
+        safeWriteJSON(MY_TEAM_ID_KEY, autoTeamId);
+      } else if (!explicitTeamIdRef.current && role === "COACH" && !autoTeamId) {
+        setMyTeamId(null);
+      }
+    } catch {
+      setState(null);
+    } finally {
+      setLoading(false);
     }
-  } catch {
-    setState(null);
-  } finally {
-    setLoading(false);
   }
-}
-
 
   async function loadAllPicksOptional() {
     try {
@@ -234,10 +223,8 @@ useEffect(() => {
       if (!res.ok) throw new Error("no picks endpoint");
       const json = await res.json().catch(() => ({}));
       const picks = (json.picks ?? []) as DraftPick[];
-      if (Array.isArray(picks) && picks.length) setAllPicks(picks);
-    } catch {
-
-    }
+      if (Array.isArray(picks)) setAllPicks(picks);
+    } catch {}
   }
 
   async function loadRemaining() {
@@ -282,12 +269,17 @@ useEffect(() => {
     loadRemaining();
     loadAllPicksOptional();
 
-    const t = setInterval(() => {
+    const poll = setInterval(() => {
       loadState();
       loadRemaining();
       loadAllPicksOptional();
     }, 2000);
 
+    return () => clearInterval(poll);
+  }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 250);
     return () => clearInterval(t);
   }, []);
 
@@ -297,7 +289,6 @@ useEffect(() => {
     if (pruned.length !== draftBoard.length) {
       persistDraftBoard(pruned);
     }
-
   }, [remaining]);
 
   const event = state?.event ?? null;
@@ -305,6 +296,7 @@ useEffect(() => {
   const teamCount = teams.length;
 
   const isLive = event?.phase === "LIVE";
+  const role = (state as any)?.me?.role as string | undefined;
 
   const scheduledTarget = useMemo(() => {
     if (event?.scheduledAt) {
@@ -359,7 +351,12 @@ useEffect(() => {
   const lastPick = useMemo(() => {
     const src = picksForBoard.length ? picksForBoard : state?.recentPicks ?? [];
     if (!src.length) return null;
-    return src.slice().sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0)).at(-1) ?? null;
+    return (
+      src
+        .slice()
+        .sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0))
+        .at(-1) ?? null
+    );
   }, [picksForBoard, state?.recentPicks]);
 
   const onClockTeam = useMemo(() => {
@@ -451,7 +448,6 @@ useEffect(() => {
         throw new Error(msg);
       }
 
-    
       await loadState();
       await loadAllPicksOptional();
       await loadRemaining();
@@ -462,6 +458,12 @@ useEffect(() => {
       setDraftBusy(null);
     }
   }
+
+  const teamHint = !myTeamId
+    ? role === "COACH"
+      ? "No team assigned to this coach yet"
+      : "Tip: add ?teamId=YOUR_TEAM_ID"
+    : null;
 
   if (loading) {
     return (
@@ -474,7 +476,6 @@ useEffect(() => {
 
   return (
     <div className="py-4 space-y-4">
-      {/* TOP STRIP: Countdown (small) OR Live status panel */}
       <div
         className={cx(
           "rounded-3xl border p-4 shadow-sm",
@@ -493,27 +494,39 @@ useEffect(() => {
               </h1>
               <Pill tone="neutral">Status: {event?.phase ?? "SETUP"}</Pill>
               {isLive ? (
-                event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>
-              ) : (state?.me?.role === "COACH" ? (
-                <Pill tone="warn">No team assigned to this coach yet</Pill>
-              ) : (
-               <Pill tone="warn">Tip: add ?teamId=YOUR_TEAM_ID</Pill>
-              ))}
+                event?.isPaused ? (
+                  <Pill tone="warn">⏸ Paused</Pill>
+                ) : (
+                  <Pill tone="good">● Live</Pill>
+                )
+              ) : null}
+
+              {teamHint ? <Pill tone="warn">{teamHint}</Pill> : null}
+
               {myTeamId ? (
                 <Pill tone="neutral">My Team: {state?.myTeam?.name ?? myTeamId}</Pill>
-              ) : (
-                <Pill tone="warn">Tip: add ?teamId=YOUR_TEAM_ID</Pill>
-              )}
+              ) : null}
+
+              {isLive && teamCount === 0 ? (
+                <Pill tone="bad">No teams loaded (Admin must Sync Teams)</Pill>
+              ) : null}
+
               {isLive && isMyTurn ? <Pill tone="good">It’s your turn</Pill> : null}
             </div>
 
             <div className="mt-1 text-sm text-muted-foreground">
-              {event?.name ?? "CYS Draft"} · Remaining: {state?.counts?.undrafted ?? remaining.length} · Drafted:{" "}
+              {event?.name ?? "CYS Draft"} · Remaining:{" "}
+              {state?.counts?.undrafted ?? remaining.length} · Drafted:{" "}
               {state?.counts?.drafted ?? 0}
             </div>
+
+            {!isLive ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Scheduled: <span className="font-semibold">{scheduledLabel}</span>
+              </div>
+            ) : null}
           </div>
 
-          {/* Countdown / Live panel */}
           {!isLive ? (
             <div className="flex items-center gap-3">
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
@@ -531,13 +544,19 @@ useEffect(() => {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">Current Pick</div>
-                <div className="text-lg font-semibold tabular-nums">#{event?.currentPick ?? 1}</div>
-                <div className="text-xs text-muted-foreground truncate">{onClockTeam?.name ?? "—"}</div>
+                <div className="text-lg font-semibold tabular-nums">
+                  #{event?.currentPick ?? 1}
+                </div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {onClockTeam?.name ?? (teamCount ? "—" : "No teams")}
+                </div>
               </div>
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">On Deck</div>
-                <div className="text-lg font-semibold truncate">{onDeckTeam?.name ?? "—"}</div>
+                <div className="text-lg font-semibold truncate">
+                  {onDeckTeam?.name ?? (teamCount ? "—" : "No teams")}
+                </div>
                 <div className="text-xs text-muted-foreground">Next up</div>
               </div>
 
@@ -555,7 +574,9 @@ useEffect(() => {
                 <div className="text-[11px] text-muted-foreground">Last Pick</div>
                 <div className="text-sm font-semibold truncate">{lastPick?.player.fullName ?? "—"}</div>
                 <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground truncate">{lastPick?.team?.name ?? "—"}</span>
+                  <span className="text-xs text-muted-foreground truncate">
+                    {lastPick?.team?.name ?? "—"}
+                  </span>
                   <Stars
                     value={
                       lastPick?.player?.rank == null
@@ -580,7 +601,6 @@ useEffect(() => {
         {draftErr ? <div className="mt-3 text-sm text-rose-600">{draftErr}</div> : null}
       </div>
 
-      {/* My Roster (always visible) */}
       <div className="rounded-3xl border bg-card p-4 shadow-sm">
         <div className="flex items-center justify-between gap-3">
           <div>
@@ -640,9 +660,7 @@ useEffect(() => {
         )}
       </div>
 
-      {/* MAIN: Eligible list + Draft board */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* Eligible players */}
         <div className="xl:col-span-8">
           <div className="rounded-3xl border bg-card p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
@@ -676,7 +694,7 @@ useEffect(() => {
                 <div className="divide-y max-h-[70vh] overflow-auto">
                   {filteredRemaining.map((p) => {
                     const onBoard = isOnDraftBoard(p.id);
-                    const canDraft = isLive && isMyTurn && !draftBusy;
+                    const canDraft = isLive && isMyTurn && !draftBusy && teamCount > 0;
 
                     return (
                       <div
@@ -716,7 +734,9 @@ useEffect(() => {
                                 : "bg-muted text-muted-foreground"
                             )}
                             title={
-                              !isLive
+                              teamCount === 0
+                                ? "No teams loaded"
+                                : !isLive
                                 ? "Draft is not live yet"
                                 : !myTeamId
                                 ? "Missing teamId"
@@ -738,12 +758,12 @@ useEffect(() => {
             </div>
 
             <div className="mt-3 text-xs text-muted-foreground">
-              Data source: <span className="font-semibold">/api/draft/players?eligible=true&drafted=false</span>
+              Data source:{" "}
+              <span className="font-semibold">/api/draft/players?eligible=true&amp;drafted=false</span>
             </div>
           </div>
         </div>
 
-        {/* Draft board */}
         <div className="xl:col-span-4">
           <div className="rounded-3xl border bg-card p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
@@ -773,9 +793,12 @@ useEffect(() => {
 
                 <div className="divide-y max-h-[70vh] overflow-auto">
                   {draftBoardPlayers.map((p) => {
-                    const canDraft = isLive && isMyTurn && !draftBusy;
+                    const canDraft = isLive && isMyTurn && !draftBusy && teamCount > 0;
                     return (
-                      <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm hover:bg-muted/40 transition">
+                      <div
+                        key={p.id}
+                        className="grid grid-cols-12 px-3 py-2 text-sm hover:bg-muted/40 transition"
+                      >
                         <div className="col-span-7 font-semibold truncate">{p.fullName}</div>
                         <div className="col-span-3 flex items-center">
                           <Stars value={p.rating} />
@@ -796,6 +819,19 @@ useEffect(() => {
                                 ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
                                 : "bg-muted text-muted-foreground"
                             )}
+                            title={
+                              teamCount === 0
+                                ? "No teams loaded"
+                                : !isLive
+                                ? "Draft is not live yet"
+                                : !myTeamId
+                                ? "Missing teamId"
+                                : !isMyTurn
+                                ? "Not your turn"
+                                : event?.isPaused
+                                ? "Draft is paused"
+                                : "Draft player"
+                            }
                           >
                             {draftBusy === p.id ? "…" : "Draft"}
                           </button>
