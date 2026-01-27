@@ -21,6 +21,13 @@ type Player = {
   fall2025Rating: number | null;
   isDrafted: boolean;
   draftedTeam: { name: string; order: number } | null;
+
+  draftedAt?: string | null;
+  drafted?: boolean;
+  isDraftedAnyFlag?: boolean;
+  eligible?: boolean;
+  isEligible?: boolean;
+  isDraftEligible?: boolean;
 };
 
 type SessionUser = { id?: string; role?: Role } | null;
@@ -54,6 +61,58 @@ function Stars({ value }: { value: number | null }) {
   );
 }
 
+function toNumberOrNull(v: any): number | null {
+  if (v == null) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function extractFallRating(p: any): number | null {
+  const candidates = [
+    p?.fall2025Rating,
+    p?.rating,
+    p?.boardRating,
+    p?.playerRating,
+    p?.ratingValue,
+    p?.ratingStars,
+    p?.stars,
+    p?.ratingFall2025,
+    p?.fallRating,
+  ];
+  for (const c of candidates) {
+    const n = toNumberOrNull(c);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+function normalizePlayers(rows: any[]): Player[] {
+  return (rows ?? []).map((p: any) => {
+    const fall = extractFallRating(p);
+    return {
+      id: String(p.id),
+      fullName: String(p.fullName ?? ""),
+      notes: (p.notes ?? null) as string | null,
+      experience: (p.experience ?? null) as string | null,
+      fall2025Rating: fall,
+      isDrafted: !!(p?.isDrafted ?? p?.drafted ?? p?.draftedAt),
+      draftedTeam: (p?.draftedTeam ??
+        (p?.team
+          ? { name: p.team?.name, order: p.team?.order }
+          : null) ??
+        null) as any,
+      draftedAt: p?.draftedAt ?? null,
+      drafted: typeof p?.drafted === "boolean" ? p.drafted : undefined,
+      isDraftedAnyFlag:
+        typeof p?.isDrafted === "boolean" ? p.isDrafted : undefined,
+      eligible: typeof p?.eligible === "boolean" ? p.eligible : undefined,
+      isEligible: typeof p?.isEligible === "boolean" ? p.isEligible : undefined,
+      isDraftEligible:
+        typeof p?.isDraftEligible === "boolean" ? p.isDraftEligible : undefined,
+    };
+  });
+}
+
 function PlayersPageInner() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [q, setQ] = useState("");
@@ -83,7 +142,8 @@ function PlayersPageInner() {
         cache: "no-store",
       });
       const json = await res.json().catch(() => ({}));
-      setPlayers((json?.players ?? []) as Player[]);
+      const rows = Array.isArray(json?.players) ? json.players : [];
+      setPlayers(normalizePlayers(rows));
     } finally {
       setLoading(false);
     }
@@ -224,14 +284,15 @@ function PlayersPageInner() {
                             max={5}
                             step={1}
                             value={p.fall2025Rating ?? ""}
-                            onChange={(e) =>
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              const n = raw === "" ? null : Number(raw);
                               setField(p.id, {
-                                fall2025Rating:
-                                  e.target.value === ""
-                                    ? null
-                                    : Number(e.target.value),
-                              })
-                            }
+                                fall2025Rating: Number.isFinite(n as any)
+                                  ? (n as number | null)
+                                  : null,
+                              });
+                            }}
                             className="w-16 rounded-md border px-2 py-1 text-sm"
                             aria-label="Rating (0-5)"
                           />
