@@ -518,10 +518,24 @@ export default function DraftPage() {
   }, [isLive, myTeamId, onClockTeam?.id, event?.isPaused]);
 
   const filteredRemaining = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return remaining;
-    return remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s));
-  }, [remaining, q]);
+  const s = q.trim().toLowerCase();
+
+  const list = s
+    ? remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s))
+    : remaining;
+
+  return [...list].sort((a, b) => {
+    const ra = a.rating;
+    const rb = b.rating;
+    if (ra == null && rb == null) return a.fullName.localeCompare(b.fullName);
+    if (ra == null) return 1;
+    if (rb == null) return -1;
+
+    if (rb !== ra) return rb - ra;
+    return a.fullName.localeCompare(b.fullName);
+  });
+}, [remaining, q]);
+
 
   const remainingById = useMemo(() => {
     const map = new Map<string, RemainingPlayer>();
