@@ -152,8 +152,14 @@ export async function POST(req: NextRequest, context: any) {
     const roundByPlayer = new Map<string, number>();
     for (const p of picks) roundByPlayer.set(p.playerId, p.round);
 
-    const giveRounds = givePlayerIds.map(id => roundByPlayer.get(id)).filter((v): v is number => typeof v === "number");
-    const receiveRounds = receivePlayerIds.map(id => roundByPlayer.get(id)).filter((v): v is number => typeof v === "number");
+    const giveRounds = givePlayerIds
+  .map((id: string) => roundByPlayer.get(id))
+  .filter((v): v is number => typeof v === "number");
+
+    const receiveRounds = receivePlayerIds
+  .map((id: string) => roundByPlayer.get(id))
+  .filter((v): v is number => typeof v === "number");
+
 
     const fromAvgRound = avg(giveRounds);
     const toAvgRound = avg(receiveRounds);
