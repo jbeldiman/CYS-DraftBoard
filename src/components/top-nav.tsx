@@ -50,6 +50,7 @@ export default function TopNav({ session }: { session: NavSession | null }) {
     { href: "/live-draft", label: "Live Draft" },
     { href: "/players", label: "Eligible Players" },
     { href: "/rosters", label: "My Roster" },
+    ...(role !== "PARENT" ? [{ href: "/trade", label: "Trade Hub" }] : []),
     { href: "/siblings", label: "Siblings" },
   ];
 
