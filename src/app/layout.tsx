@@ -31,21 +31,20 @@ export default async function RootLayout({
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <div className="min-h-screen flex flex-col">
-          {/* Keep your existing nav; this is where role/login UI likely lives */}
           <TopNav session={session as any} />
 
-          {/* Subtle background + centered content */}
           <main className="flex-1">
-            <div className="mx-auto w-full max-w-6xl px-4 py-8">
-              <div className="rounded-2xl border bg-card shadow-sm">
-                <div className="p-6 sm:p-8">{children}</div>
-              </div>
+            <div className="mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+              {children}
             </div>
           </main>
 
-          <footer className="mx-auto w-full max-w-6xl px-4 pb-10 text-xs text-muted-foreground">
-            <div className="flex items-center justify-between">
-              <span> {new Date().getFullYear()} CYS Draft Hub</span>
+          <footer className="border-t bg-background/60">
+            <div className="mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8 py-5 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-3">
+                <span>{new Date().getFullYear()} CYS Draft Hub</span>
+                <span className="hidden sm:inline">Draft Night Command Center</span>
+              </div>
             </div>
           </footer>
         </div>
