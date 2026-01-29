@@ -30,14 +30,16 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gradient-to-b from-yellow-50/40 via-background to-background`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gradient-to-b from-yellow-100 via-yellow-50 to-background`}
       >
         <div className="min-h-screen flex flex-col">
           <TopNav session={session as any} />
 
           <main className="flex-1">
             <div className="mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+              <div className="bg-white dark:bg-background rounded-2xl shadow-sm border border-black/5 p-4 sm:p-6"></div>
               {children}
+              </div>
             </div>
           </main>
 
