@@ -5,18 +5,14 @@ import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
 
-type RouteContext = {
-  params: { tradeId: string };
-};
-
 function avg(nums: number[]) {
   if (!nums.length) return null;
   const s = nums.reduce((a, b) => a + b, 0);
   return s / nums.length;
 }
 
-export async function POST(req: NextRequest, context: RouteContext) {
-  const { tradeId } = context.params;
+export async function POST(req: NextRequest, context: any) {
+  const tradeId = context.params.tradeId;
 
   const session = await getServerSession(authOptions);
   const userId = (session?.user as any)?.id as string | undefined;
@@ -145,9 +141,6 @@ export async function POST(req: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Select players from both teams" }, { status: 400 });
     }
 
-    const counterFromTeamId = trade.toTeamId;
-    const counterToTeamId = trade.fromTeamId;
-
     const picks = await prisma.draftPick.findMany({
       where: {
         draftEventId: trade.draftEventId,
@@ -179,8 +172,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
       return tx.trade.create({
         data: {
           draftEventId: trade.draftEventId,
-          fromTeamId: counterFromTeamId,
-          toTeamId: counterToTeamId,
+          fromTeamId: trade.toTeamId,
+          toTeamId: trade.fromTeamId,
           status: "PENDING",
           createdByUserId: userId,
           parentTradeId: trade.id,
