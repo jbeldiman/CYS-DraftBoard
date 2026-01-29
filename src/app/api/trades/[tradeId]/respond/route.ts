@@ -11,16 +11,24 @@ function avg(nums: number[]) {
   return s / nums.length;
 }
 
-export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
+export async function POST(
+  req: Request,
+  { params }: { params: { tradeId: string } }
+) {
   const session = await getServerSession(authOptions);
   const userId = (session?.user as any)?.id as string | undefined;
   const role = (session?.user as any)?.role as string | undefined;
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
 
   const allowed = role === "COACH" || role === "ADMIN" || role === "BOARD";
-  if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!allowed) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
-  const tradeId = ctx.params.tradeId;
+  const tradeId = params.tradeId;
 
   const trade = await prisma.trade.findUnique({
     where: { id: tradeId },
@@ -34,7 +42,9 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
     },
   });
 
-  if (!trade) return NextResponse.json({ error: "Trade not found" }, { status: 404 });
+  if (!trade) {
+    return NextResponse.json({ error: "Trade not found" }, { status: 404 });
+  }
 
   const body = await req.json().catch(() => null);
   const action = String(body?.action ?? "").toUpperCase();
@@ -45,14 +55,19 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
       where: { draftEventId: trade.draftEventId, coachUserId: userId },
       select: { id: true },
     });
-    if (!myTeam) return NextResponse.json({ error: "No team assigned to this coach yet" }, { status: 400 });
+
+    if (!myTeam) {
+      return NextResponse.json({ error: "No team assigned to this coach yet" }, { status: 400 });
+    }
 
     if (myTeam.id !== trade.toTeamId && myTeam.id !== trade.fromTeamId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-
-    if ((action === "ACCEPT" || action === "REJECT" || action === "COUNTER") && myTeam.id !== trade.toTeamId) {
+    if (
+      (action === "ACCEPT" || action === "REJECT" || action === "COUNTER") &&
+      myTeam.id !== trade.toTeamId
+    ) {
       return NextResponse.json({ error: "Only the receiving coach can respond" }, { status: 403 });
     }
   }
@@ -75,10 +90,10 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
       return NextResponse.json({ error: "Trade is not pending" }, { status: 400 });
     }
 
-    const fromGives = trade.items.filter((i) => i.side === "FROM_GIVES").map((i) => i.playerId);
-    const toGives = trade.items.filter((i) => i.side === "TO_GIVES").map((i) => i.playerId);
+    const fromGives = trade.items.filter(i => i.side === "FROM_GIVES").map(i => i.playerId);
+    const toGives = trade.items.filter(i => i.side === "TO_GIVES").map(i => i.playerId);
 
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async tx => {
       const a = await tx.draftPlayer.updateMany({
         where: {
           id: { in: fromGives },
@@ -130,15 +145,14 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
       return NextResponse.json({ error: "Select players from both teams" }, { status: 400 });
     }
 
-
     const counterFromTeamId = trade.toTeamId;
     const counterToTeamId = trade.fromTeamId;
-
 
     const givePlayers = await prisma.draftPlayer.findMany({
       where: { id: { in: givePlayerIds }, draftEventId: trade.draftEventId, draftedTeamId: counterFromTeamId, isDrafted: true },
       select: { id: true },
     });
+
     if (givePlayers.length !== givePlayerIds.length) {
       return NextResponse.json({ error: "One or more 'giving' players are not on your roster" }, { status: 400 });
     }
@@ -147,6 +161,7 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
       where: { id: { in: receivePlayerIds }, draftEventId: trade.draftEventId, draftedTeamId: counterToTeamId, isDrafted: true },
       select: { id: true },
     });
+
     if (receivePlayers.length !== receivePlayerIds.length) {
       return NextResponse.json({ error: "One or more 'receiving' players are not on the other roster" }, { status: 400 });
     }
@@ -162,8 +177,8 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
     const roundByPlayer = new Map<string, number>();
     for (const p of picks) roundByPlayer.set(p.playerId, p.round);
 
-    const giveRounds = givePlayerIds.map((id: string) => roundByPlayer.get(id)).filter((v): v is number => typeof v === "number");
-    const receiveRounds = receivePlayerIds.map((id: string) => roundByPlayer.get(id)).filter((v): v is number => typeof v === "number");
+    const giveRounds = givePlayerIds.map(id => roundByPlayer.get(id)).filter((v): v is number => typeof v === "number");
+    const receiveRounds = receivePlayerIds.map(id => roundByPlayer.get(id)).filter((v): v is number => typeof v === "number");
 
     if (giveRounds.length !== givePlayerIds.length || receiveRounds.length !== receivePlayerIds.length) {
       return NextResponse.json({ error: "Missing draft round data for one or more players" }, { status: 400 });
@@ -171,6 +186,7 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
 
     const fromAvgRound = avg(giveRounds);
     const toAvgRound = avg(receiveRounds);
+
     if (fromAvgRound == null || toAvgRound == null) {
       return NextResponse.json({ error: "Unable to compute trade fairness" }, { status: 400 });
     }
@@ -183,7 +199,7 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
       );
     }
 
-    const created = await prisma.$transaction(async (tx) => {
+    const created = await prisma.$transaction(async tx => {
       await tx.trade.update({
         where: { id: trade.id },
         data: { status: "COUNTERED", respondedByUserId: userId },
@@ -202,8 +218,8 @@ export async function POST(req: Request, ctx: { params: { tradeId: string } }) {
           roundDelta,
           items: {
             create: [
-              ...givePlayerIds.map((playerId: string) => ({ playerId, side: "FROM_GIVES" as const })),
-              ...receivePlayerIds.map((playerId: string) => ({ playerId, side: "TO_GIVES" as const })),
+              ...givePlayerIds.map(playerId => ({ playerId, side: "FROM_GIVES" as const })),
+              ...receivePlayerIds.map(playerId => ({ playerId, side: "TO_GIVES" as const })),
             ],
           },
         },
