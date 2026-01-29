@@ -187,11 +187,18 @@ export async function POST(req: NextRequest, context: any) {
           toAvgRound,
           roundDelta,
           items: {
-            create: [
-              ...givePlayerIds.map(playerId => ({ playerId, side: "FROM_GIVES" as const })),
-              ...receivePlayerIds.map(playerId => ({ playerId, side: "TO_GIVES" as const })),
-            ],
-          },
+  create: [
+    ...givePlayerIds.map((playerId: string) => ({
+      playerId,
+      side: "FROM_GIVES" as const,
+    })),
+    ...receivePlayerIds.map((playerId: string) => ({
+      playerId,
+      side: "TO_GIVES" as const,
+    })),
+  ],
+},
+
         },
         select: { id: true },
       });
