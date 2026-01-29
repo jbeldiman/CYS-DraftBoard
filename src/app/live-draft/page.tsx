@@ -69,15 +69,8 @@ type RemainingPlayer = {
   rating: number | null;
 };
 
-type SiblingInfo = {
-  siblingNames: string;
-  draftCost: number | null;
-};
-
 const FALLBACK_TEAMS_ENDPOINT = "/api/admin/teams";
 const OPTIONAL_ALL_PICKS_ENDPOINT = "/api/draft/picks";
-const OPTIONAL_SIBLINGS_ENDPOINT = "/api/draft/siblings";
-
 const DEFAULT_ROUNDS = 16;
 
 function clamp(n: number, lo: number, hi: number) {
@@ -97,14 +90,12 @@ function Stars({ value }: { value: number | null }) {
 }
 
 function snakeTeamIndexFromOverallPick(overallPick1: number, teamCount: number) {
-  if (teamCount <= 0) return { round: 1, index: 0 };
+  if (teamCount <= 0) return { round: 1, index: 0, posInRound: 0 };
   const p0 = overallPick1 - 1;
   const round = Math.floor(p0 / teamCount) + 1;
   const posInRound = p0 % teamCount;
-
   const isReverse = round % 2 === 0;
   const index = isReverse ? teamCount - 1 - posInRound : posInRound;
-
   return { round, index, posInRound };
 }
 
@@ -142,12 +133,34 @@ function Modal({
   );
 }
 
-function parseCost(v: unknown): number | null {
-  const n = typeof v === "string" ? Number(v.trim()) : typeof v === "number" ? v : NaN;
-  if (!Number.isFinite(n)) return null;
-  const i = Math.trunc(n);
-  if (i < 1 || i > 10) return null;
-  return i;
+function Segmented({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="inline-flex rounded-xl border bg-background p-1 shadow-sm">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            onClick={() => onChange(o.value)}
+            className={cx(
+              "px-3 py-1.5 text-xs rounded-lg transition",
+              active ? "bg-muted font-semibold" : "text-muted-foreground hover:bg-muted/50"
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 export default function LiveDraftPage() {
@@ -163,8 +176,6 @@ export default function LiveDraftPage() {
 
   const [allPicks, setAllPicks] = useState<DraftPick[] | null>(null);
 
-  const [siblingByPlayerId, setSiblingByPlayerId] = useState<Record<string, SiblingInfo>>({});
-
   const [draftOpen, setDraftOpen] = useState(false);
   const [draftRound, setDraftRound] = useState<number>(1);
   const [draftTeam, setDraftTeam] = useState<Team | null>(null);
@@ -175,9 +186,27 @@ export default function LiveDraftPage() {
   const [pickBusy, setPickBusy] = useState(false);
   const [pickErr, setPickErr] = useState<string | null>(null);
 
+  const [isCompact, setIsCompact] = useState(false);
+  const [mobileTab, setMobileTab] = useState<"board" | "recent" | "remaining">("board");
+
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const apply = () => setIsCompact(mq.matches);
+    apply();
+
+    const anyMq = mq as any;
+    if (anyMq.addEventListener) anyMq.addEventListener("change", apply);
+    else anyMq.addListener?.(apply);
+    return () => {
+      if (anyMq.removeEventListener) anyMq.removeEventListener("change", apply);
+      else anyMq.removeListener?.(apply);
+    };
   }, []);
 
   async function loadState() {
@@ -227,39 +256,16 @@ export default function LiveDraftPage() {
     } catch {}
   }
 
-  async function loadSiblingInfo() {
-    try {
-      const res = await fetch(OPTIONAL_SIBLINGS_ENDPOINT, { cache: "no-store" });
-      if (!res.ok) return;
-      const json = await res.json().catch(() => ({} as any));
-      const rows = (json?.rows ?? []) as any[];
-      if (!Array.isArray(rows)) return;
-
-      const map: Record<string, SiblingInfo> = {};
-      for (const r of rows) {
-        const playerId = String(r?.playerId ?? "");
-        if (!playerId) continue;
-        const siblingNames = String(r?.siblingNames ?? "").trim();
-        const draftCost = parseCost(r?.draftCost ?? null);
-        map[playerId] = { siblingNames, draftCost };
-      }
-      setSiblingByPlayerId(map);
-    } catch {}
-  }
-
   async function loadRemaining() {
     try {
-      const res = await fetch("/api/draft/players?eligible=true&drafted=false&includeRatings=true", { cache: "no-store" });
+      const res = await fetch("/api/draft/players?eligible=true&drafted=false", { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
 
       setRemaining(
         (json.players ?? []).map((p: any) => {
           const rawRating = p.rating ?? p.boardRating ?? p.playerRating ?? null;
           const rank = p.rank ?? p.playerRank ?? null;
-
-          const ratingFromRank =
-            rank == null ? null : rank <= 10 ? 5 : rank <= 20 ? 4 : rank <= 30 ? 3 : rank <= 40 ? 2 : 1;
-
+          const ratingFromRank = rank == null ? null : rank <= 10 ? 5 : rank <= 20 ? 4 : rank <= 30 ? 3 : rank <= 40 ? 2 : 1;
           return { id: p.id, fullName: p.fullName, rating: rawRating ?? ratingFromRank } as RemainingPlayer;
         })
       );
@@ -274,13 +280,11 @@ export default function LiveDraftPage() {
     })();
     loadRemaining();
     loadAllPicksOptional();
-    loadSiblingInfo();
 
     const t = setInterval(() => {
       loadState();
       loadRemaining();
       loadAllPicksOptional();
-      loadSiblingInfo();
     }, 2000);
 
     return () => clearInterval(t);
@@ -288,6 +292,7 @@ export default function LiveDraftPage() {
 
   useEffect(() => {
     loadTeamsFallbackIfNeeded(state);
+
   }, [state?.teams?.length]);
 
   const event = state?.event ?? null;
@@ -414,25 +419,14 @@ export default function LiveDraftPage() {
           playerId,
         }),
       });
-
-      const j = await res.json().catch(() => ({} as any));
-
       if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
         throw new Error(j?.error ?? "Failed to draft player");
       }
-
-      const auto = j?.siblingAutoPick;
-      if (auto?.player?.fullName) {
-        const msg = `Sibling auto-pick applied: ${auto.player.fullName}` + (auto?.round ? ` (Round ${auto.round})` : "");
-        setPickErr(msg);
-        setTimeout(() => setPickErr(null), 2500);
-      }
-
       setDraftOpen(false);
       await loadState();
       await loadAllPicksOptional();
       await loadRemaining();
-      await loadSiblingInfo();
     } catch (e: any) {
       setPickErr(e?.message ?? "Failed to draft player");
     } finally {
@@ -449,7 +443,7 @@ export default function LiveDraftPage() {
     );
   }
 
-  // Countdown page
+
   if (!isLive) {
     return (
       <div className="py-6">
@@ -496,9 +490,12 @@ export default function LiveDraftPage() {
     );
   }
 
-  // LIVE PAGE
+
+  const colRound = isCompact ? 64 : 90;
+  const colMin = isCompact ? 150 : teams.length > 8 ? 170 : 180;
+
   return (
-    <div className="py-3">
+    <div className="py-2 sm:py-3">
       {/* Draft modal */}
       <Modal
         open={draftOpen}
@@ -513,7 +510,7 @@ export default function LiveDraftPage() {
               {draftOverall ? <Pill tone="neutral">Overall #{draftOverall}</Pill> : <Pill tone="warn">Out-of-order</Pill>}
             </div>
             <div className="mt-2 text-xs text-muted-foreground">
-              Admin can fill picks in any order. If the player has a sibling + cost, the sibling will be auto-assigned by backend.
+              Admin can fill picks in any order. This assigns the player to this team + round slot.
             </div>
           </div>
 
@@ -535,34 +532,19 @@ export default function LiveDraftPage() {
               {modalFilteredPlayers.length === 0 ? (
                 <div className="px-3 py-6 text-sm text-muted-foreground">No matches.</div>
               ) : (
-                modalFilteredPlayers.map((p) => {
-                  const sib = siblingByPlayerId[p.id] ?? null;
-                  return (
-                    <button
-                      key={p.id}
-                      disabled={pickBusy}
-                      onClick={() => adminMakePick(p.id)}
-                      className="w-full text-left grid grid-cols-12 px-3 py-2 hover:bg-muted/40 transition disabled:opacity-50"
-                    >
-                      <div className="col-span-8 min-w-0">
-                        <div className="font-semibold truncate">{p.fullName}</div>
-                        {sib?.siblingNames ? (
-                          <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                            Sibling: <span className="font-semibold">{sib.siblingNames}</span>
-                            {sib.draftCost != null ? (
-                              <span className="ml-2">
-                                <span className="font-semibold">Cost</span>: {sib.draftCost}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="col-span-4 flex items-center">
-                        <Stars value={p.rating} />
-                      </div>
-                    </button>
-                  );
-                })
+                modalFilteredPlayers.map((p) => (
+                  <button
+                    key={p.id}
+                    disabled={pickBusy}
+                    onClick={() => adminMakePick(p.id)}
+                    className="w-full text-left grid grid-cols-12 px-3 py-2 hover:bg-muted/40 transition disabled:opacity-50"
+                  >
+                    <div className="col-span-8 font-semibold truncate">{p.fullName}</div>
+                    <div className="col-span-4 flex items-center">
+                      <Stars value={p.rating} />
+                    </div>
+                  </button>
+                ))
               )}
             </div>
           </div>
@@ -572,37 +554,51 @@ export default function LiveDraftPage() {
       {/* HERO HEADER */}
       <div
         className={cx(
-          "rounded-3xl border p-5 sm:p-6 shadow-sm",
+          "rounded-3xl border p-4 sm:p-6 shadow-sm",
           event?.isPaused ? "bg-amber-50/60 dark:bg-amber-950/20" : "bg-emerald-50/60 dark:bg-emerald-950/20"
         )}
       >
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3 sm:gap-4">
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
             <div className="min-w-0">
-              <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight">Live Draft Board</h1>
-              <div className="mt-1 text-sm text-muted-foreground">
+              <h1 className="text-2xl sm:text-4xl font-semibold tracking-tight">Live Draft Board</h1>
+              <div className="mt-1 text-xs sm:text-sm text-muted-foreground">
                 {event?.name ?? "CYS Draft"} · Scheduled: {scheduledLabel}
               </div>
+
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 {event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>}
                 <Pill tone="neutral">Pick #{event?.currentPick ?? 1}</Pill>
                 <Pill tone="neutral">Teams: {teams.length}</Pill>
                 <Pill tone="neutral">Drafted: {draftedCount}</Pill>
                 <Pill tone="neutral">Remaining: {remainingCount}</Pill>
-                {allPicks ? <Pill tone="neutral">Board: All picks</Pill> : <Pill tone="warn">Board: Recent picks only</Pill>}
+                {allPicks ? <Pill tone="neutral">Board: All picks</Pill> : <Pill tone="warn">Board: Recent picks</Pill>}
               </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 sm:items-stretch">
-              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[240px]">
-                <div className="text-xs text-muted-foreground">Pick Clock</div>
-                <div className="mt-1 text-4xl font-bold tabular-nums tracking-tight">
+            <div className="grid grid-cols-2 sm:flex sm:flex-row gap-3 sm:items-stretch">
+              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm">
+                <div className="text-[11px] text-muted-foreground">Pick Clock</div>
+                <div className="mt-1 text-3xl sm:text-4xl font-bold tabular-nums tracking-tight">
                   {pad2(liveMin)}:{pad2(liveSec)}
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">{event?.isPaused ? "Paused — clock held" : "Time remaining for current pick"}</div>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {event?.isPaused ? "Paused — clock held" : "Time remaining"}
+                </div>
               </div>
 
-              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[260px]">
+              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm">
+                <div className="text-[11px] text-muted-foreground">On the Clock</div>
+                <div className="mt-1 text-base sm:text-xl font-semibold truncate">{onClock.team?.name ?? "—"}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {!event?.isPaused ? <Pill tone="good">● Picking</Pill> : <Pill tone="warn">⏸ Waiting</Pill>}
+                  <Pill tone="neutral">
+                    R{onClock.round} · P{onClock.pickInRound}
+                  </Pill>
+                </div>
+              </div>
+
+              <div className="hidden sm:block rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[260px]">
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <div className="text-xs text-muted-foreground">Last Pick</div>
@@ -616,62 +612,60 @@ export default function LiveDraftPage() {
                   </div>
                 </div>
               </div>
-
-              <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm min-w-[260px]">
-                <div className="text-xs text-muted-foreground">On the Clock</div>
-                <div className="mt-1 text-xl font-semibold truncate">{onClock.team?.name ?? "—"}</div>
-                <div className="mt-2 flex items-center gap-2">
-                  {!event?.isPaused ? <Pill tone="good">● Picking now</Pill> : <Pill tone="warn">⏸ Waiting</Pill>}
-                  <Pill tone="neutral">
-                    R{onClock.round} · P{onClock.pickInRound}
-                  </Pill>
-                </div>
-              </div>
             </div>
           </div>
 
-          {!teams.length ? (
-            <div className="rounded-2xl border bg-card p-4 text-sm">
-              <div className="font-semibold">No teams loaded</div>
-              <div className="text-muted-foreground mt-1">
-                Your <span className="font-semibold">/api/draft/state</span> is returning an empty teams array. This page will auto-fallback to{" "}
-                <span className="font-semibold">{FALLBACK_TEAMS_ENDPOINT}</span> if it exists.
-              </div>
-            </div>
-          ) : null}
+          {/* Mobile-only segmented tabs */}
+          <div className="sm:hidden flex items-center justify-between gap-3">
+            <Segmented
+              value={mobileTab}
+              onChange={(v) => setMobileTab(v as any)}
+              options={[
+                { value: "board", label: "Board" },
+                { value: "recent", label: "Recent" },
+                { value: "remaining", label: "Remaining" },
+              ]}
+            />
+            <Pill tone="neutral">{teams.length} teams</Pill>
+          </div>
         </div>
       </div>
 
-      {/* MAIN GRID */}
-      <div className="mt-5 grid grid-cols-1 xl:grid-cols-12 gap-4">
+      {/* MAIN */}
+      <div className="mt-4 sm:mt-5 grid grid-cols-1 xl:grid-cols-12 gap-4">
         {/* BOARD */}
-        <div className="xl:col-span-8">
+        <div className={cx("xl:col-span-8", mobileTab !== "board" && "sm:block hidden", mobileTab === "board" ? "block" : "sm:block hidden")}>
           <div className="rounded-3xl border bg-card shadow-sm overflow-hidden">
-            <div className="px-5 py-4 border-b">
+            <div className="px-4 sm:px-5 py-4 border-b">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <div>
                   <div className="text-sm font-semibold">Draft Board</div>
-                  <div className="text-xs text-muted-foreground">
-                    Snake draft · rounds down the left · teams across the top · click a cell to assign a pick (Admin)
+                  <div className="text-[11px] sm:text-xs text-muted-foreground">
+                    Tap a cell to assign a pick (Admin). Horizontal scroll for teams.
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Pill tone="neutral">{teams.length} teams</Pill>
                   <Pill tone="neutral">{computedRoundsNeeded} rounds</Pill>
+                  <Pill tone="neutral">{teams.length} teams</Pill>
                 </div>
               </div>
             </div>
 
             <div className="max-h-[72vh] overflow-auto">
-              <div className={cx("min-w-[980px]", teams.length > 8 && "min-w-[1400px]")}>
+              <div className={cx("min-w-[920px]", isCompact && "min-w-[780px]", teams.length > 8 && !isCompact && "min-w-[1400px]")}>
                 {/* Header row */}
-                <div className="sticky top-0 z-20 grid" style={{ gridTemplateColumns: `90px repeat(${Math.max(teams.length, 1)}, minmax(180px, 1fr))` }}>
-                  <div className="bg-muted/70 backdrop-blur border-b px-3 py-3 text-xs font-semibold sticky left-0 z-30">Round</div>
+                <div
+                  className="sticky top-0 z-20 grid"
+                  style={{ gridTemplateColumns: `${colRound}px repeat(${Math.max(teams.length, 1)}, minmax(${colMin}px, 1fr))` }}
+                >
+                  <div className="bg-muted/80 backdrop-blur border-b px-2 sm:px-3 py-3 text-[11px] sm:text-xs font-semibold sticky left-0 z-30">
+                    Round
+                  </div>
 
                   {(teams.length ? teams : [{ id: "x", name: "Teams", order: 1 }]).map((t) => (
-                    <div key={t.id} className="bg-muted/70 backdrop-blur border-b px-3 py-3 text-xs font-semibold">
+                    <div key={t.id} className="bg-muted/80 backdrop-blur border-b px-2 sm:px-3 py-3 text-[11px] sm:text-xs font-semibold">
                       <div className="truncate">{t.name}</div>
-                      <div className="text-[11px] text-muted-foreground font-normal">Order #{t.order}</div>
+                      <div className="text-[10px] text-muted-foreground font-normal">#{t.order}</div>
                     </div>
                   ))}
                 </div>
@@ -685,9 +679,11 @@ export default function LiveDraftPage() {
                       <div
                         key={round}
                         className="grid"
-                        style={{ gridTemplateColumns: `90px repeat(${Math.max(teams.length, 1)}, minmax(180px, 1fr))` }}
+                        style={{ gridTemplateColumns: `${colRound}px repeat(${Math.max(teams.length, 1)}, minmax(${colMin}px, 1fr))` }}
                       >
-                        <div className="sticky left-0 z-10 bg-card px-3 py-3 text-sm font-semibold border-r">{round}</div>
+                        <div className="sticky left-0 z-10 bg-card px-2 sm:px-3 py-3 text-sm font-semibold border-r">
+                          {round}
+                        </div>
 
                         {(teams.length ? teams : [{ id: "x", name: "—", order: 1 }]).map((t) => {
                           const pick = teams.length ? pickLookup.get(`${round}:${t.id}`) ?? null : null;
@@ -703,23 +699,16 @@ export default function LiveDraftPage() {
                           const expectedOverall = teams.length ? (round - 1) * teams.length + posInRound + 1 : null;
                           const expectedPickInRound = teams.length ? posInRound + 1 : 1;
 
-                          const sib = pick ? siblingByPlayerId[pick.player.id] ?? null : null;
-
                           return (
                             <button
                               type="button"
                               key={`${round}-${t.id}`}
                               onClick={() => {
                                 const useOverall = isCurrentCell || isNextCell ? expectedOverall : null;
-                                openDraftModal({
-                                  round,
-                                  team: t,
-                                  pickInRound: expectedPickInRound,
-                                  overall: useOverall,
-                                });
+                                openDraftModal({ round, team: t, pickInRound: expectedPickInRound, overall: useOverall });
                               }}
                               className={cx(
-                                "px-3 py-3 text-left border-l first:border-l-0",
+                                "px-2 sm:px-3 py-2.5 sm:py-3 text-left border-l first:border-l-0",
                                 pick ? "bg-background" : "bg-background/50",
                                 "hover:bg-muted/40 transition",
                                 isCurrentCell && "bg-emerald-50/80 dark:bg-emerald-950/25",
@@ -729,29 +718,27 @@ export default function LiveDraftPage() {
                               {pick ? (
                                 <div className="space-y-1">
                                   <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs rounded-full border bg-muted px-2 py-0.5">#{pick.overallNumber}</span>
-                                    <span className="text-[11px] text-muted-foreground">P{pick.pickInRound}</span>
+                                    <span className="text-[10px] sm:text-xs rounded-full border bg-muted px-2 py-0.5">
+                                      #{pick.overallNumber}
+                                    </span>
+                                    <span className="text-[10px] sm:text-[11px] text-muted-foreground">P{pick.pickInRound}</span>
                                   </div>
-                                  <div className="font-semibold leading-snug">{pick.player.fullName}</div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {pick.player.rank != null ? `Rank ${pick.player.rank}` : ""}
+
+                                  <div className={cx("font-semibold leading-snug", isCompact ? "text-sm" : "text-base")}>
+                                    <span className={cx("block", isCompact ? "line-clamp-2" : "line-clamp-3")}>
+                                      {pick.player.fullName}
+                                    </span>
                                   </div>
-                                  {sib?.siblingNames ? (
-                                    <div className="text-[11px] text-muted-foreground truncate">
-                                      Sibling: <span className="font-semibold">{sib.siblingNames}</span>
-                                      {sib.draftCost != null ? (
-                                        <span className="ml-2">
-                                          <span className="font-semibold">Cost</span>: {sib.draftCost}
-                                        </span>
-                                      ) : null}
-                                    </div>
+
+                                  {!isCompact ? (
+                                    <div className="text-xs text-muted-foreground">{pick.player.rank != null ? `Rank ${pick.player.rank}` : ""}</div>
                                   ) : null}
                                 </div>
                               ) : (
                                 <div className="h-full flex items-center justify-between gap-2">
-                                  <div className="text-sm text-muted-foreground/70">
+                                  <div className="text-xs text-muted-foreground/70">
                                     {isCurrentCell ? (
-                                      <span className="font-semibold text-emerald-700 dark:text-emerald-200">On the clock</span>
+                                      <span className="font-semibold text-emerald-700 dark:text-emerald-200">On clock</span>
                                     ) : isNextCell ? (
                                       <span className="font-semibold text-amber-700 dark:text-amber-200">On deck</span>
                                     ) : (
@@ -771,14 +758,14 @@ export default function LiveDraftPage() {
               </div>
             </div>
 
-            <div className="px-5 py-3 border-t text-xs text-muted-foreground">
-              Admin: click any cell to assign a player to that team + round slot (out-of-order supported). Sibling auto-pick will be handled server-side.
+            <div className="px-4 sm:px-5 py-3 border-t text-[11px] sm:text-xs text-muted-foreground">
+              Admin: tap any cell to assign a player to that team + round slot (out-of-order supported).
             </div>
           </div>
         </div>
 
-        {/* RIGHT RAIL */}
-        <div className="xl:col-span-4 space-y-4">
+        {/* RIGHT RAIL (desktop) */}
+        <div className={cx("xl:col-span-4 space-y-4", "hidden sm:block")}>
           <div className="rounded-3xl border bg-card p-5 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -792,36 +779,23 @@ export default function LiveDraftPage() {
               {picksForSidebar.length === 0 ? (
                 <div className="py-6 text-sm text-muted-foreground">No picks yet.</div>
               ) : (
-                picksForSidebar.map((p) => {
-                  const sib = siblingByPlayerId[p.player.id] ?? null;
-                  return (
-                    <div key={p.id} className="py-3 flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs rounded-full border bg-muted px-2 py-0.5">#{p.overallNumber}</span>
-                          <div className="font-semibold truncate">{p.team.name}</div>
-                        </div>
-                        <div className="mt-1 text-sm text-muted-foreground truncate">
-                          {p.player.fullName}
-                          {p.player.rank !== null ? ` · Rank ${p.player.rank}` : ""}
-                        </div>
-                        {sib?.siblingNames ? (
-                          <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                            Sibling: <span className="font-semibold">{sib.siblingNames}</span>
-                            {sib.draftCost != null ? (
-                              <span className="ml-2">
-                                <span className="font-semibold">Cost</span>: {sib.draftCost}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
+                picksForSidebar.map((p) => (
+                  <div key={p.id} className="py-3 flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs rounded-full border bg-muted px-2 py-0.5">#{p.overallNumber}</span>
+                        <div className="font-semibold truncate">{p.team.name}</div>
                       </div>
-                      <div className="text-xs text-muted-foreground whitespace-nowrap">
-                        R{p.round} · P{p.pickInRound}
+                      <div className="mt-1 text-sm text-muted-foreground truncate">
+                        {p.player.fullName}
+                        {p.player.rank !== null ? ` · Rank ${p.player.rank}` : ""}
                       </div>
                     </div>
-                  );
-                })
+                    <div className="text-xs text-muted-foreground whitespace-nowrap">
+                      R{p.round} · P{p.pickInRound}
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </div>
@@ -853,34 +827,118 @@ export default function LiveDraftPage() {
                 <div className="px-3 py-6 text-sm text-muted-foreground">No matches.</div>
               ) : (
                 <div className="divide-y max-h-[520px] overflow-auto">
-                  {filteredRemaining.map((p) => {
-                    const sib = siblingByPlayerId[p.id] ?? null;
-                    return (
-                      <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition">
-                        <div className="col-span-8 min-w-0">
-                          <div className="font-semibold truncate">{p.fullName}</div>
-                          {sib?.siblingNames ? (
-                            <div className="mt-0.5 text-[11px] text-muted-foreground truncate">
-                              Sibling: <span className="font-semibold">{sib.siblingNames}</span>
-                              {sib.draftCost != null ? (
-                                <span className="ml-2">
-                                  <span className="font-semibold">Cost</span>: {sib.draftCost}
-                                </span>
-                              ) : null}
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="col-span-4 flex items-center">
-                          <Stars value={p.rating} />
-                        </div>
+                  {filteredRemaining.map((p) => (
+                    <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition">
+                      <div className="col-span-8 font-semibold truncate">{p.fullName}</div>
+                      <div className="col-span-4 flex items-center">
+                        <Stars value={p.rating} />
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
 
-            <div className="mt-3 text-xs text-muted-foreground">Remaining count shown above is the remaining list only (not total registered).</div>
+            <div className="mt-3 text-xs text-muted-foreground">Remaining count is the eligible/undrafted list.</div>
+          </div>
+        </div>
+
+        {/* Mobile: Recent */}
+        <div className={cx("sm:hidden", mobileTab === "recent" ? "block" : "hidden")}>
+          <div className="rounded-3xl border bg-card p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Recent Picks</div>
+                <div className="text-[11px] text-muted-foreground">Live updates</div>
+              </div>
+              <Pill tone="neutral">{picksForSidebar.length}</Pill>
+            </div>
+
+            <div className="mt-3 divide-y">
+              {picksForSidebar.length === 0 ? (
+                <div className="py-8 text-sm text-muted-foreground">No picks yet.</div>
+              ) : (
+                picksForSidebar.map((p) => (
+                  <div key={p.id} className="py-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] rounded-full border bg-muted px-2 py-0.5">#{p.overallNumber}</span>
+                          <div className="text-xs font-semibold truncate">{p.team.name}</div>
+                        </div>
+                        <div className="mt-1 text-sm font-semibold truncate">{p.player.fullName}</div>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground whitespace-nowrap">
+                        R{p.round} · P{p.pickInRound}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Mobile: Remaining */}
+        <div className={cx("sm:hidden", mobileTab === "remaining" ? "block" : "hidden")}>
+          <div className="rounded-3xl border bg-card p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">Remaining Players</div>
+                <div className="text-[11px] text-muted-foreground">
+                  Showing <span className="font-semibold">{filteredRemaining.length}</span> of{" "}
+                  <span className="font-semibold">{remaining.length}</span>
+                </div>
+              </div>
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search…"
+                className="h-9 w-40 rounded-md border px-3 text-sm"
+              />
+            </div>
+
+            <div className="mt-3 rounded-2xl border overflow-hidden">
+              <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold sticky top-0">
+                <div className="col-span-8">Player</div>
+                <div className="col-span-4">Rating</div>
+              </div>
+
+              {filteredRemaining.length === 0 ? (
+                <div className="px-3 py-8 text-sm text-muted-foreground">No matches.</div>
+              ) : (
+                <div className="divide-y max-h-[72vh] overflow-auto">
+                  {filteredRemaining.map((p) => (
+                    <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm">
+                      <div className="col-span-8 font-semibold truncate">{p.fullName}</div>
+                      <div className="col-span-4 flex items-center justify-end">
+                        <Stars value={p.rating} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-3 text-[11px] text-muted-foreground">Tip: use search to quickly find a player.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile-only quick glance footer */}
+      <div className="sm:hidden mt-4">
+        <div className="rounded-2xl border bg-card p-3 shadow-sm">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="text-[11px] text-muted-foreground">Last Pick</div>
+              <div className="text-sm font-semibold truncate">{lastPick?.player.fullName ?? "—"}</div>
+              <div className="text-[11px] text-muted-foreground truncate">{lastPick?.team?.name ?? "—"}</div>
+            </div>
+            <div>
+              <div className="text-[11px] text-muted-foreground">On Deck</div>
+              <div className="text-sm font-semibold truncate">{onDeck.team?.name ?? "—"}</div>
+              <div className="text-[11px] text-muted-foreground truncate">After: {onClock.team?.name ?? "—"}</div>
+            </div>
           </div>
         </div>
       </div>

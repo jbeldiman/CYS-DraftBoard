@@ -57,6 +57,36 @@ function Pill({
   );
 }
 
+function Segmented({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <div className="inline-flex rounded-xl border bg-background p-1 shadow-sm">
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            onClick={() => onChange(o.value)}
+            className={cx(
+              "px-3 py-1.5 text-xs rounded-lg transition",
+              active ? "bg-muted font-semibold" : "text-muted-foreground hover:bg-muted/50"
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 type DraftPick = {
   id: string;
   overallNumber: number;
@@ -105,11 +135,6 @@ type DraftBoardEntry = {
   addedAt: number;
 };
 
-type SiblingInfo = {
-  siblingNames: string;
-  draftCost: number | null;
-};
-
 const MY_TEAM_ID_KEY = "cys.myTeamId.v1";
 
 function safeReadJSON<T>(key: string, fallback: T): T {
@@ -132,10 +157,8 @@ function snakeTeamIndexFromOverallPick(overallPick1: number, teamCount: number) 
   const p0 = overallPick1 - 1;
   const round = Math.floor(p0 / teamCount) + 1;
   const posInRound = p0 % teamCount;
-
   const isReverse = round % 2 === 0;
   const index = isReverse ? teamCount - 1 - posInRound : posInRound;
-
   return { round, index, posInRound };
 }
 
@@ -263,14 +286,6 @@ async function trySaveBoardToServer(teamId: string | null, entries: DraftBoardEn
   }
 }
 
-function parseCost(v: unknown): number | null {
-  const n = typeof v === "string" ? Number(v.trim()) : typeof v === "number" ? v : NaN;
-  if (!Number.isFinite(n)) return null;
-  const i = Math.trunc(n);
-  if (i < 1 || i > 10) return null;
-  return i;
-}
-
 export default function DraftPage() {
   const fallbackScheduledTarget = useMemo(() => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)), []);
 
@@ -293,7 +308,22 @@ export default function DraftPage() {
   const serverBoardSupportedRef = useRef<boolean | null>(null);
   const lastSavedBoardRef = useRef<string>("");
 
-  const [siblingByPlayerId, setSiblingByPlayerId] = useState<Record<string, SiblingInfo>>({});
+  const [isCompact, setIsCompact] = useState(false);
+  const [mobileTab, setMobileTab] = useState<"eligible" | "board" | "roster">("eligible");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const apply = () => setIsCompact(mq.matches);
+    apply();
+    const anyMq = mq as any;
+    if (anyMq.addEventListener) anyMq.addEventListener("change", apply);
+    else anyMq.addListener?.(apply);
+    return () => {
+      if (anyMq.removeEventListener) anyMq.removeEventListener("change", apply);
+      else anyMq.removeListener?.(apply);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -312,26 +342,6 @@ export default function DraftPage() {
       if (tid) setMyTeamId(tid);
     } catch {}
   }, []);
-
-  async function loadSiblingInfo() {
-    try {
-      const res = await fetch("/api/draft/siblings", { cache: "no-store" });
-      if (!res.ok) return;
-      const json = await res.json().catch(() => ({} as any));
-      const rows = (json?.rows ?? []) as any[];
-      if (!Array.isArray(rows)) return;
-
-      const map: Record<string, SiblingInfo> = {};
-      for (const r of rows) {
-        const playerId = String(r?.playerId ?? "");
-        if (!playerId) continue;
-        const siblingNames = String(r?.siblingNames ?? "").trim();
-        const draftCost = parseCost(r?.draftCost ?? null);
-        map[playerId] = { siblingNames, draftCost };
-      }
-      setSiblingByPlayerId(map);
-    } catch {}
-  }
 
   async function loadDraftBoardForTeam(teamId: string | null) {
     const localKey = draftBoardKeyForTeam(teamId);
@@ -441,13 +451,11 @@ export default function DraftPage() {
     loadState();
     loadRemaining();
     loadAllPicksOptional();
-    loadSiblingInfo();
 
     const poll = setInterval(() => {
       loadState();
       loadRemaining();
       loadAllPicksOptional();
-      loadSiblingInfo();
     }, 2000);
 
     return () => clearInterval(poll);
@@ -464,6 +472,7 @@ export default function DraftPage() {
     if (pruned.length !== draftBoard.length) {
       setDraftBoardAndPersist(pruned, myTeamId);
     }
+   
   }, [remaining]);
 
   const event = state?.event ?? null;
@@ -526,12 +535,10 @@ export default function DraftPage() {
   const lastPick = useMemo(() => {
     const src = picksForBoard.length ? picksForBoard : state?.recentPicks ?? [];
     if (!src.length) return null;
-    return (
-      src
-        .slice()
-        .sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0))
-        .at(-1) ?? null
-    );
+    return src
+      .slice()
+      .sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0))
+      .at(-1) ?? null;
   }, [picksForBoard, state?.recentPicks]);
 
   const onClockTeam = useMemo(() => {
@@ -565,7 +572,6 @@ export default function DraftPage() {
       if (ra == null && rb == null) return a.fullName.localeCompare(b.fullName);
       if (ra == null) return 1;
       if (rb == null) return -1;
-
       if (rb !== ra) return rb - ra;
       return a.fullName.localeCompare(b.fullName);
     });
@@ -624,27 +630,18 @@ export default function DraftPage() {
         body: JSON.stringify({ playerId }),
       });
 
-      const j = await res.json().catch(() => ({}));
-
       if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
         const msg =
-          j?.error ?? (res.status === 404 ? "Missing endpoint: POST /api/draft/pick" : "Failed to draft player");
+          j?.error ??
+          (res.status === 404 ? "Missing endpoint: POST /api/draft/pick" : "Failed to draft player");
         throw new Error(msg);
-      }
-
-      const siblingId: string | null =
-        (j?.siblingAutoPick?.player?.id as string | undefined) ??
-        (j?.siblingAutoPick?.playerId as string | undefined) ??
-        null;
-
-      const nextBoard = draftBoard.filter((e) => e.playerId !== playerId && (!siblingId || e.playerId !== siblingId));
-      if (nextBoard.length !== draftBoard.length) {
-        setDraftBoardAndPersist(nextBoard, myTeamId);
       }
 
       await loadState();
       await loadAllPicksOptional();
       await loadRemaining();
+      removeFromDraftBoard(playerId);
     } catch (e: any) {
       setDraftErr(e?.message ?? "Failed to draft player");
     } finally {
@@ -652,11 +649,8 @@ export default function DraftPage() {
     }
   }
 
-  const teamHint = !myTeamId
-    ? role === "COACH"
-      ? "No team assigned to this coach yet"
-      : "Tip: add ?teamId=YOUR_TEAM_ID"
-    : null;
+  const teamHint =
+    !myTeamId ? (role === "COACH" ? "No team assigned to this coach yet" : "Tip: add ?teamId=YOUR_TEAM_ID") : null;
 
   if (loading) {
     return (
@@ -667,8 +661,11 @@ export default function DraftPage() {
     );
   }
 
+  const canDraftAny = isLive && isMyTurn && !draftBusy && teamCount > 0;
+
   return (
-    <div className="py-4 space-y-4">
+    <div className="py-3 sm:py-4 space-y-4">
+      {/* Header */}
       <div
         className={cx(
           "rounded-3xl border p-4 shadow-sm",
@@ -727,7 +724,7 @@ export default function DraftPage() {
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">On Deck</div>
-                <div className="text-lg font-semibold truncate">{onDeckTeam?.name ?? (teamCount ? "—" : "—")}</div>
+                <div className="text-lg font-semibold truncate">{onDeckTeam?.name ?? (teamCount ? "—" : "No teams")}</div>
                 <div className="text-xs text-muted-foreground">Next up</div>
               </div>
 
@@ -752,57 +749,76 @@ export default function DraftPage() {
         </div>
 
         {draftErr ? <div className="mt-3 text-sm text-rose-600">{draftErr}</div> : null}
+
+        {/* Mobile tabs */}
+        {isCompact ? (
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <Segmented
+              value={mobileTab}
+              onChange={(v) => setMobileTab(v as any)}
+              options={[
+                { value: "eligible", label: "Eligible" },
+                { value: "board", label: "My Board" },
+                { value: "roster", label: "Roster" },
+              ]}
+            />
+            {isLive ? <Pill tone={canDraftAny ? "good" : "neutral"}>{canDraftAny ? "Drafting on" : "Drafting off"}</Pill> : null}
+          </div>
+        ) : null}
       </div>
 
-      <div className="rounded-3xl border bg-card p-4 shadow-sm">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold">My Roster</div>
-            <div className="text-xs text-muted-foreground">
-              Populates automatically from picks for your team{!myTeamId ? " (missing teamId)" : ""}
+      {/* Roster */}
+      <div className={cx(isCompact && mobileTab !== "roster" ? "hidden" : "block")}>
+        <div className="rounded-3xl border bg-card p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">My Roster</div>
+              <div className="text-xs text-muted-foreground">
+                Populates automatically from picks for your team{!myTeamId ? " (missing teamId)" : ""}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Pill tone="neutral">{myRoster.length} players</Pill>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Pill tone="neutral">{myRoster.length} players</Pill>
-          </div>
+
+          {!myTeamId ? (
+            <div className="mt-3 text-sm text-muted-foreground">
+              Add <span className="font-semibold">?teamId=</span> to the URL (or set{" "}
+              <span className="font-semibold">{MY_TEAM_ID_KEY}</span> in localStorage) to enable roster.
+            </div>
+          ) : myRoster.length === 0 ? (
+            <div className="mt-3 text-sm text-muted-foreground">No picks yet.</div>
+          ) : (
+            <div className="mt-3 rounded-2xl border overflow-hidden">
+              <div className="grid grid-cols-12 bg-muted px-3 py-2 text-xs font-semibold">
+                <div className="col-span-7">Player</div>
+                <div className="col-span-3">Rating</div>
+                <div className="col-span-2 text-right">Pick</div>
+              </div>
+              <div className="divide-y">
+                {myRoster.map((p) => (
+                  <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm">
+                    <div className="col-span-7 font-semibold truncate">{p.player.fullName}</div>
+                    <div className="col-span-3 flex items-center">
+                      <Stars value={rankToStars(p.player.rank)} />
+                    </div>
+                    <div className="col-span-2 text-right text-xs text-muted-foreground tabular-nums">#{p.overallNumber}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-
-        {!myTeamId ? (
-          <div className="mt-3 text-sm text-muted-foreground">
-            Add <span className="font-semibold">?teamId=</span> to the URL (or set{" "}
-            <span className="font-semibold">{MY_TEAM_ID_KEY}</span> in localStorage) to enable roster.
-          </div>
-        ) : myRoster.length === 0 ? (
-          <div className="mt-3 text-sm text-muted-foreground">No picks yet.</div>
-        ) : (
-          <div className="mt-3 rounded-2xl border overflow-hidden">
-            <div className="grid grid-cols-12 bg-muted px-3 py-2 text-xs font-semibold">
-              <div className="col-span-7">Player</div>
-              <div className="col-span-3">Rating</div>
-              <div className="col-span-2 text-right">Pick</div>
-            </div>
-            <div className="divide-y">
-              {myRoster.map((p) => (
-                <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm">
-                  <div className="col-span-7 font-semibold truncate">{p.player.fullName}</div>
-                  <div className="col-span-3 flex items-center">
-                    <Stars value={rankToStars(p.player.rank)} />
-                  </div>
-                  <div className="col-span-2 text-right text-xs text-muted-foreground tabular-nums">
-                    #{p.overallNumber}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-        <div className="xl:col-span-8">
+      {/* Main */}
+      <div className={cx("grid grid-cols-1 xl:grid-cols-12 gap-4", isCompact ? "xl:grid-cols-1" : "")}>
+        {/* Eligible */}
+        <div className={cx("xl:col-span-8", isCompact && mobileTab !== "eligible" ? "hidden" : "block")}>
           <div className="rounded-3xl border bg-card p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <div className="text-sm font-semibold">Eligible Players</div>
                 <div className="text-xs text-muted-foreground">
                   Showing <span className="font-semibold">{filteredRemaining.length}</span> of{" "}
@@ -815,63 +831,66 @@ export default function DraftPage() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search…"
-                className="h-9 w-52 rounded-md border px-3 text-sm"
+                className={cx("h-9 rounded-md border px-3 text-sm", isCompact ? "w-36" : "w-52")}
               />
             </div>
 
             <div className="mt-3 rounded-2xl border overflow-hidden">
               <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold sticky top-0">
-                <div className="col-span-6">Player</div>
-                <div className="col-span-3">Rating</div>
-                <div className="col-span-3 text-right">Actions</div>
+                <div className="col-span-7 sm:col-span-6">Player</div>
+                <div className="hidden sm:block sm:col-span-3">Rating</div>
+                <div className="col-span-5 sm:col-span-3 text-right">Actions</div>
               </div>
 
               {filteredRemaining.length === 0 ? (
-                <div className="px-3 py-6 text-sm text-muted-foreground">No matches.</div>
+                <div className="px-3 py-8 text-sm text-muted-foreground">No matches.</div>
               ) : (
-                <div className="divide-y max-h-[70vh] overflow-auto">
+                <div className={cx("divide-y overflow-auto", isCompact ? "max-h-[72vh]" : "max-h-[70vh]")}>
                   {filteredRemaining.map((p) => {
                     const onBoard = isOnDraftBoard(p.id);
                     const canDraft = isLive && isMyTurn && !draftBusy && teamCount > 0;
-                    const sib = siblingByPlayerId[p.id] ?? null;
 
                     return (
-                      <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition">
-                        <div className="col-span-6 min-w-0">
+                      <div
+                        key={p.id}
+                        className={cx(
+                          "grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition",
+                          isCompact && "py-3"
+                        )}
+                      >
+                        <div className="col-span-7 sm:col-span-6 min-w-0">
                           <div className="font-semibold truncate">{p.fullName}</div>
-                          {sib?.siblingNames ? (
-                            <div className="mt-0.5 text-xs text-muted-foreground truncate">
-                              Sibling: <span className="font-semibold">{sib.siblingNames}</span>
-                              {sib.draftCost != null ? (
-                                <span className="ml-2">
-                                  <span className="font-semibold">Cost</span>: {sib.draftCost}
-                                </span>
-                              ) : null}
+                          {isCompact ? (
+                            <div className="mt-1 text-xs text-muted-foreground flex items-center justify-between">
+                              <Stars value={p.rating} />
+                              {onBoard ? <span className="text-[11px]">On board</span> : <span className="text-[11px]">—</span>}
                             </div>
                           ) : null}
                         </div>
 
-                        <div className="col-span-3 flex items-center">
+                        <div className="hidden sm:flex sm:col-span-3 items-center">
                           <Stars value={p.rating} />
                         </div>
 
-                        <div className="col-span-3 flex items-center justify-end gap-2">
-                          {!onBoard ? (
-                            <button onClick={() => addToDraftBoard(p.id)} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
-                              Add to Draft Board
-                            </button>
-                          ) : (
-                            <button onClick={() => removeFromDraftBoard(p.id)} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
-                              Remove
-                            </button>
-                          )}
+                        <div className="col-span-5 sm:col-span-3 flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => (onBoard ? removeFromDraftBoard(p.id) : addToDraftBoard(p.id))}
+                            className={cx(
+                              "h-9 sm:h-8 rounded-md border px-2 text-xs hover:bg-muted",
+                              isCompact && "px-3"
+                            )}
+                          >
+                            {onBoard ? "Remove" : "Add"}
+                          </button>
 
                           <button
                             disabled={!canDraft || draftBusy === p.id}
                             onClick={() => coachDraftPlayer(p.id)}
                             className={cx(
-                              "h-8 rounded-md px-3 text-xs border",
-                              canDraft ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700" : "bg-muted text-muted-foreground"
+                              "h-9 sm:h-8 rounded-md px-3 text-xs border",
+                              canDraft
+                                ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
+                                : "bg-muted text-muted-foreground"
                             )}
                             title={
                               teamCount === 0
@@ -896,15 +915,14 @@ export default function DraftPage() {
                 </div>
               )}
             </div>
-
-            <div className="mt-3 text-xs text-muted-foreground"></div>
           </div>
         </div>
 
-        <div className="xl:col-span-4">
+        {/* My Draft Board */}
+        <div className={cx("xl:col-span-4", isCompact && mobileTab !== "board" ? "hidden" : "block")}>
           <div className="rounded-3xl border bg-card p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <div className="text-sm font-semibold">My Draft Board</div>
                 <div className="text-xs text-muted-foreground">
                   {serverBoardSupportedRef.current === true ? "Saved to backend" : "Saved locally (backend endpoint missing)"}
@@ -912,7 +930,7 @@ export default function DraftPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Pill tone="neutral">{draftBoardPlayers.length}</Pill>
-                <button onClick={clearDraftBoard} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
+                <button onClick={clearDraftBoard} className="h-9 sm:h-8 rounded-md border px-3 sm:px-2 text-xs hover:bg-muted">
                   Clear
                 </button>
               </div>
@@ -923,44 +941,32 @@ export default function DraftPage() {
             ) : (
               <div className="mt-3 rounded-2xl border overflow-hidden">
                 <div className="grid grid-cols-12 bg-muted px-3 py-2 text-xs font-semibold">
-                  <div className="col-span-5">Player</div>
-                  <div className="col-span-4">Sibling</div>
-                  <div className="col-span-1">Cost</div>
-                  <div className="col-span-1">★</div>
-                  <div className="col-span-1 text-right">Actions</div>
+                  <div className="col-span-7">Player</div>
+                  <div className="col-span-3">Rating</div>
+                  <div className="col-span-2 text-right">Actions</div>
                 </div>
 
-                <div className="divide-y max-h-[70vh] overflow-auto">
+                <div className={cx("divide-y overflow-auto", isCompact ? "max-h-[72vh]" : "max-h-[70vh]")}>
                   {draftBoardPlayers.map((p) => {
                     const canDraft = isLive && isMyTurn && !draftBusy && teamCount > 0;
-                    const sib = siblingByPlayerId[p.id] ?? null;
-
                     return (
-                      <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm hover:bg-muted/40 transition">
-                        <div className="col-span-5 font-semibold truncate">{p.fullName}</div>
-
-                        <div className="col-span-4 text-xs text-muted-foreground truncate">
-                          {sib?.siblingNames ? sib.siblingNames : "—"}
-                        </div>
-
-                        <div className="col-span-1 text-xs tabular-nums">
-                          {sib?.draftCost != null ? sib.draftCost : "—"}
-                        </div>
-
-                        <div className="col-span-1 flex items-center">
+                      <div key={p.id} className={cx("grid grid-cols-12 px-3 py-2 text-sm hover:bg-muted/40 transition", isCompact && "py-3")}>
+                        <div className="col-span-7 font-semibold truncate">{p.fullName}</div>
+                        <div className="col-span-3 flex items-center">
                           <Stars value={p.rating} />
                         </div>
-
-                        <div className="col-span-1 flex justify-end gap-2">
-                          <button onClick={() => removeFromDraftBoard(p.id)} className="h-8 rounded-md border px-2 text-xs hover:bg-muted">
+                        <div className="col-span-2 flex justify-end gap-2">
+                          <button onClick={() => removeFromDraftBoard(p.id)} className="h-9 sm:h-8 rounded-md border px-3 sm:px-2 text-xs hover:bg-muted">
                             ✕
                           </button>
                           <button
                             disabled={!canDraft || draftBusy === p.id}
                             onClick={() => coachDraftPlayer(p.id)}
                             className={cx(
-                              "h-8 rounded-md px-2 text-xs border",
-                              canDraft ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700" : "bg-muted text-muted-foreground"
+                              "h-9 sm:h-8 rounded-md px-3 sm:px-2 text-xs border",
+                              canDraft
+                                ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
+                                : "bg-muted text-muted-foreground"
                             )}
                             title={
                               teamCount === 0
@@ -985,8 +991,6 @@ export default function DraftPage() {
                 </div>
               </div>
             )}
-
-            <div className="mt-3 text-xs text-muted-foreground"></div>
           </div>
         </div>
       </div>
