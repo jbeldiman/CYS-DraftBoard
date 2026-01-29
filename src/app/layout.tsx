@@ -29,7 +29,9 @@ export default async function RootLayout({
 
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-gradient-to-b from-yellow-50/40 via-background to-background`}
+      >
         <div className="min-h-screen flex flex-col">
           <TopNav session={session as any} />
 
@@ -39,7 +41,7 @@ export default async function RootLayout({
             </div>
           </main>
 
-          <footer className="border-t bg-background/60">
+          <footer className="border-t bg-background/60 backdrop-blur">
             <div className="mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8 py-5 text-xs text-muted-foreground">
               <div className="flex items-center justify-between gap-3">
                 <span>{new Date().getFullYear()} CYS Draft Hub</span>
