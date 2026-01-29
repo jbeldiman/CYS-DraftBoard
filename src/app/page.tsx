@@ -92,6 +92,11 @@ export default function HomePage() {
                       label="Full Player List"
                       sublabel="Eligible players and details"
                     />
+                    <ActionButton
+                      href="/trade"
+                      label="Trade Hub"
+                      sublabel="Propose • accept • counter trades"
+                    />
                   </div>
 
                   <div className="mt-6 text-xs text-white/65">

@@ -12,8 +12,9 @@ export async function proxy(req: NextRequest) {
   const isAdminRoute = path.startsWith("/admin");
   const isDraftRoute = path.startsWith("/draft");
   const isCoachHubRoute = path.startsWith("/siblings") || path.startsWith("/history");
+  const isTradeRoute = path.startsWith("/trade");
 
-  const isProtectedRoute = isRootRoute || isAdminRoute || isDraftRoute || isCoachHubRoute;
+  const isProtectedRoute = isRootRoute || isAdminRoute || isDraftRoute || isCoachHubRoute || isTradeRoute;
 
   if (!isProtectedRoute) {
     return NextResponse.next();

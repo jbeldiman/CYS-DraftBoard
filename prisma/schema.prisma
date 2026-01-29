@@ -14,6 +14,19 @@ enum Role {
   PARENT
 }
 
+enum TradeStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  COUNTERED
+  CANCELLED
+}
+
+enum TradeSide {
+  FROM_GIVES
+  TO_GIVES
+}
+
 enum DraftPhase {
   SETUP
   LIVE
@@ -49,6 +62,64 @@ model User {
 
   accessRequests        AccessRequest[]
   decidedAccessRequests AccessRequest[] @relation("AccessRequestDecidedBy")
+
+  // Trade relations (prevents ambiguity + useful for queries)
+  createdTrades   Trade[] @relation("TradeCreatedBy")
+  respondedTrades Trade[] @relation("TradeRespondedBy")
+}
+
+model Trade {
+  id              String      @id @default(cuid())
+  draftEventId    String
+  draftEvent      DraftEvent  @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
+
+  fromTeamId      String
+  fromTeam        DraftTeam   @relation("TradeFromTeam", fields: [fromTeamId], references: [id], onDelete: Cascade)
+
+  toTeamId        String
+  toTeam          DraftTeam   @relation("TradeToTeam", fields: [toTeamId], references: [id], onDelete: Cascade)
+
+  status          TradeStatus @default(PENDING)
+
+  createdByUserId String
+  createdByUser   User        @relation("TradeCreatedBy", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  respondedByUserId String?
+  respondedByUser   User?      @relation("TradeRespondedBy", fields: [respondedByUserId], references: [id], onDelete: SetNull)
+
+  parentTradeId   String?
+  parentTrade     Trade?      @relation("TradeParent", fields: [parentTradeId], references: [id], onDelete: SetNull)
+  counters        Trade[]     @relation("TradeParent")
+
+  fromAvgRound    Float?
+  toAvgRound      Float?
+  roundDelta      Float?
+
+  message         String?
+
+  executedAt      DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  items           TradeItem[]
+
+  @@index([draftEventId, status, updatedAt])
+  @@index([fromTeamId, status, updatedAt])
+  @@index([toTeamId, status, updatedAt])
+}
+
+model TradeItem {
+  id       String     @id @default(cuid())
+  tradeId  String
+  trade    Trade      @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  playerId String
+  player   DraftPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  side     TradeSide
+
+  @@index([tradeId, side])
+  @@index([playerId])
 }
 
 model AccessRequest {
@@ -122,26 +193,33 @@ model DraftEvent {
   picks              DraftPick[]
   siblingCosts       SiblingDraftCost[]
 
+  // Nice to have
+  trades             Trade[]
+
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
 }
 
 model DraftTeam {
-  id           String     @id @default(cuid())
-  draftEventId String
-  draftEvent   DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
+  id             String     @id @default(cuid())
+  draftEventId   String
+  draftEvent     DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
 
-  name         String
-  order        Int
+  name           String
+  order          Int
 
-  coachUserId  String?
-  coachUser    User?      @relation("CoachTeams", fields: [coachUserId], references: [id], onDelete: SetNull)
+  coachUserId    String?
+  coachUser      User?      @relation("CoachTeams", fields: [coachUserId], references: [id], onDelete: SetNull)
 
   draftedPlayers DraftPlayer[] @relation("TeamDraftedPlayers")
   picks          DraftPick[]
 
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  // Nice to have
+  tradesSent     Trade[] @relation("TradeFromTeam")
+  tradesReceived Trade[] @relation("TradeToTeam")
+
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   @@unique([draftEventId, order])
   @@unique([draftEventId, name])
@@ -225,7 +303,6 @@ model SiblingDraftCost {
   player       DraftPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
   groupKey     String
-
   draftCost    String?
 
   createdAt    DateTime   @default(now())
