@@ -158,7 +158,7 @@ export async function POST(req: NextRequest, context: any) {
 
     const receiveRounds = receivePlayerIds
   .map((id: string) => roundByPlayer.get(id))
-  .filter((v: number | undefined): v is number => typeof v === "number");r
+  .filter((v: number | undefined): v is number => typeof v === "number");
 
 
     const fromAvgRound = avg(giveRounds);
