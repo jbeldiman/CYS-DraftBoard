@@ -580,7 +580,6 @@ export default function TradeHubPage() {
         </div>
 
         <div className="mt-6 text-xs text-neutral-500">
-          Note: Trades use polling (no websockets). If you want true real-time popups without alerts, we can add a toast component next.
         </div>
       </div>
     </div>
