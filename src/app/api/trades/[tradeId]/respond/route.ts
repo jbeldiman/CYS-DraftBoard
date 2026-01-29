@@ -1,9 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextResponse, NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
+
+type RouteContext = {
+  params: { tradeId: string };
+};
 
 function avg(nums: number[]) {
   if (!nums.length) return null;
@@ -11,10 +15,9 @@ function avg(nums: number[]) {
   return s / nums.length;
 }
 
-export async function POST(
-  req: Request,
-  { params }: { params: { tradeId: string } }
-) {
+export async function POST(req: NextRequest, context: RouteContext) {
+  const { tradeId } = context.params;
+
   const session = await getServerSession(authOptions);
   const userId = (session?.user as any)?.id as string | undefined;
   const role = (session?.user as any)?.role as string | undefined;
@@ -27,8 +30,6 @@ export async function POST(
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-
-  const tradeId = params.tradeId;
 
   const trade = await prisma.trade.findUnique({
     where: { id: tradeId },
@@ -48,7 +49,6 @@ export async function POST(
 
   const body = await req.json().catch(() => null);
   const action = String(body?.action ?? "").toUpperCase();
-
 
   if (role === "COACH") {
     const myTeam = await prisma.draftTeam.findFirst({
@@ -148,24 +148,6 @@ export async function POST(
     const counterFromTeamId = trade.toTeamId;
     const counterToTeamId = trade.fromTeamId;
 
-    const givePlayers = await prisma.draftPlayer.findMany({
-      where: { id: { in: givePlayerIds }, draftEventId: trade.draftEventId, draftedTeamId: counterFromTeamId, isDrafted: true },
-      select: { id: true },
-    });
-
-    if (givePlayers.length !== givePlayerIds.length) {
-      return NextResponse.json({ error: "One or more 'giving' players are not on your roster" }, { status: 400 });
-    }
-
-    const receivePlayers = await prisma.draftPlayer.findMany({
-      where: { id: { in: receivePlayerIds }, draftEventId: trade.draftEventId, draftedTeamId: counterToTeamId, isDrafted: true },
-      select: { id: true },
-    });
-
-    if (receivePlayers.length !== receivePlayerIds.length) {
-      return NextResponse.json({ error: "One or more 'receiving' players are not on the other roster" }, { status: 400 });
-    }
-
     const picks = await prisma.draftPick.findMany({
       where: {
         draftEventId: trade.draftEventId,
@@ -180,23 +162,12 @@ export async function POST(
     const giveRounds = givePlayerIds.map(id => roundByPlayer.get(id)).filter((v): v is number => typeof v === "number");
     const receiveRounds = receivePlayerIds.map(id => roundByPlayer.get(id)).filter((v): v is number => typeof v === "number");
 
-    if (giveRounds.length !== givePlayerIds.length || receiveRounds.length !== receivePlayerIds.length) {
-      return NextResponse.json({ error: "Missing draft round data for one or more players" }, { status: 400 });
-    }
-
     const fromAvgRound = avg(giveRounds);
     const toAvgRound = avg(receiveRounds);
+    const roundDelta = fromAvgRound != null && toAvgRound != null ? Math.abs(fromAvgRound - toAvgRound) : null;
 
-    if (fromAvgRound == null || toAvgRound == null) {
-      return NextResponse.json({ error: "Unable to compute trade fairness" }, { status: 400 });
-    }
-
-    const roundDelta = Math.abs(fromAvgRound - toAvgRound);
-    if (roundDelta > 2) {
-      return NextResponse.json(
-        { error: "Counter is not fair enough (avg rounds must be within 2)", fromAvgRound, toAvgRound, roundDelta },
-        { status: 400 }
-      );
+    if (roundDelta == null || roundDelta > 2) {
+      return NextResponse.json({ error: "Counter is not fair enough (avg rounds must be within 2)" }, { status: 400 });
     }
 
     const created = await prisma.$transaction(async tx => {
@@ -205,7 +176,7 @@ export async function POST(
         data: { status: "COUNTERED", respondedByUserId: userId },
       });
 
-      const counter = await tx.trade.create({
+      return tx.trade.create({
         data: {
           draftEventId: trade.draftEventId,
           fromTeamId: counterFromTeamId,
@@ -225,8 +196,6 @@ export async function POST(
         },
         select: { id: true },
       });
-
-      return counter;
     });
 
     return NextResponse.json({ ok: true, counterTradeId: created.id });
