@@ -17,6 +17,9 @@ function normSecret(v: unknown) {
 }
 
 export const authOptions: NextAuthOptions = {
+  secret: process.env.NEXTAUTH_SECRET,
+  trustHost: true,
+
   adapter: PrismaAdapter(prisma),
 
   session: {
@@ -48,6 +51,9 @@ export const authOptions: NextAuthOptions = {
           const existing = await prisma.user.findUnique({ where: { email } });
 
           if (!existing) {
+            const ok = password === masterAdminPassword;
+            if (!ok) return null;
+
             const created = await prisma.user.create({
               data: {
                 email,
@@ -56,9 +62,6 @@ export const authOptions: NextAuthOptions = {
                 passwordHash: await bcrypt.hash(masterAdminPassword, 10),
               },
             });
-
-            const ok = password === masterAdminPassword;
-            if (!ok) return null;
 
             return { id: created.id, email: created.email, name: created.name, role: created.role } as any;
           }
