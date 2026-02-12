@@ -58,13 +58,7 @@ function Stars({
         const on = i < v;
         if (!showEmpty && !on) return null;
         return (
-          <span
-            key={i}
-            className={cx(
-              "leading-none",
-              on ? "text-amber-500" : "text-muted-foreground/30"
-            )}
-          >
+          <span key={i} className={cx("leading-none", on ? "text-amber-500" : "text-muted-foreground/30")}>
             ★
           </span>
         );
@@ -100,6 +94,7 @@ type DraftState = {
   teams: Team[];
   recentPicks: DraftPick[];
   counts: { undrafted: number; drafted: number };
+  me?: { role?: "ADMIN" | "BOARD" | "COACH" | "PARENT" | string };
 };
 
 type RemainingPlayer = {
@@ -139,11 +134,35 @@ function ratingFromRank(rank: number | null) {
   return 1;
 }
 
+async function adminPlacePick(overallNumber: number, playerId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    let res = await fetch("/api/draft/admin/pick", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ overallNumber, playerId }),
+    });
+
+    if (!res.ok) {
+      res = await fetch("/api/draft/admin/pick", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pickNumber: overallNumber, playerId }),
+      });
+    }
+
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({} as any));
+      return { ok: false, error: j?.error ?? "Admin pick failed" };
+    }
+
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "Admin pick failed" };
+  }
+}
+
 export default function LiveDraftPage() {
-  const fallbackScheduledTarget = useMemo(
-    () => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-    []
-  );
+  const fallbackScheduledTarget = useMemo(() => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)), []);
 
   const [now, setNow] = useState(() => new Date());
   const [state, setState] = useState<DraftState | null>(null);
@@ -154,6 +173,10 @@ export default function LiveDraftPage() {
 
   const [remaining, setRemaining] = useState<RemainingPlayer[]>([]);
   const [q, setQ] = useState("");
+
+  const [adminPickNumber, setAdminPickNumber] = useState<number>(1);
+  const [err, setErr] = useState<string | null>(null);
+  const [busyPlayerId, setBusyPlayerId] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -203,16 +226,12 @@ export default function LiveDraftPage() {
       const json = await res.json().catch(() => ({}));
       const picks = (json.picks ?? []) as DraftPick[];
       if (Array.isArray(picks)) setAllPicks(picks);
-    } catch {
-      
-    }
+    } catch {}
   }
 
   async function loadRemaining() {
     try {
-      const res = await fetch("/api/draft/players?eligible=true&drafted=false", {
-        cache: "no-store",
-      });
+      const res = await fetch("/api/draft/players?eligible=true&drafted=false", { cache: "no-store" });
       const json = await res.json().catch(() => ({}));
 
       setRemaining(
@@ -233,9 +252,7 @@ export default function LiveDraftPage() {
   }
 
   useEffect(() => {
-    (async () => {
-      await loadState();
-    })();
+    loadState();
     loadRemaining();
     loadAllPicksOptional();
 
@@ -250,11 +267,17 @@ export default function LiveDraftPage() {
 
   useEffect(() => {
     loadTeamsFallbackIfNeeded(state);
-   
   }, [state?.teams?.length]);
 
   const event = state?.event ?? null;
   const isLive = event?.phase === "LIVE";
+  const role = (state as any)?.me?.role as string | undefined;
+  const isAdmin = role === "ADMIN" || role === "BOARD";
+
+  useEffect(() => {
+    const cur = event?.currentPick ?? 1;
+    if (Number.isFinite(cur)) setAdminPickNumber(cur);
+  }, [event?.currentPick]);
 
   const scheduledTarget = useMemo(() => {
     if (event?.scheduledAt) {
@@ -311,6 +334,12 @@ export default function LiveDraftPage() {
       .sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0));
   }, [allPicks, state?.recentPicks]);
 
+  const pickByOverall = useMemo(() => {
+    const m = new Map<number, DraftPick>();
+    for (const p of picks) m.set(p.overallNumber, p);
+    return m;
+  }, [picks]);
+
   const lastPick = picks.length ? picks[picks.length - 1] : null;
 
   const onClock = useMemo(() => {
@@ -327,6 +356,13 @@ export default function LiveDraftPage() {
     return { team: teams[index] ?? null, overall: cur };
   }, [event?.currentPick, teamCount, teams]);
 
+  const remainingCount = remaining.length;
+  const draftedCount = state?.counts?.drafted ?? picks.length;
+
+  const totalPlayers = Math.max(0, draftedCount + (state?.counts?.undrafted ?? remainingCount));
+  const rounds = teamCount > 0 ? Math.max(1, Math.ceil(totalPlayers / teamCount)) : 0;
+  const totalSlots = teamCount > 0 ? rounds * teamCount : 0;
+
   const upcoming = useMemo(() => {
     const start = event?.currentPick ?? 1;
     const count = 8;
@@ -338,14 +374,27 @@ export default function LiveDraftPage() {
     });
   }, [event?.currentPick, teamCount, teams]);
 
-  const remainingCount = remaining.length;
-  const draftedCount = state?.counts?.drafted ?? picks.length;
-
   const filteredRemaining = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return remaining;
     return remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s));
   }, [remaining, q]);
+
+  async function doAdminPlace(playerId: string, pickNum: number) {
+    setErr(null);
+    setBusyPlayerId(playerId);
+    try {
+      const r = await adminPlacePick(pickNum, playerId);
+      if (!r.ok) throw new Error(r.error ?? "Admin pick failed");
+      await loadState();
+      await loadAllPicksOptional();
+      await loadRemaining();
+    } catch (e: any) {
+      setErr(e?.message ?? "Admin pick failed");
+    } finally {
+      setBusyPlayerId(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -423,9 +472,31 @@ export default function LiveDraftPage() {
                 {event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>}
                 <Pill tone="neutral">Pick #{event?.currentPick ?? 1}</Pill>
                 <Pill tone="neutral">Teams: {teams.length}</Pill>
+                <Pill tone="neutral">Rounds: {rounds || "—"}</Pill>
                 <Pill tone="neutral">Drafted: {draftedCount}</Pill>
                 <Pill tone="neutral">Remaining: {remainingCount}</Pill>
               </div>
+
+              {isAdmin ? (
+                <div className="mt-3 rounded-2xl border bg-background p-3 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="text-sm font-semibold">Admin Controls</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Force pick #</span>
+                      <input
+                        value={String(adminPickNumber)}
+                        onChange={(e) => setAdminPickNumber(Math.max(1, Number(e.target.value || 1)))}
+                        className="h-9 w-24 rounded-md border px-3 text-sm tabular-nums"
+                        inputMode="numeric"
+                      />
+                      <Pill tone="neutral">Use “Place” buttons</Pill>
+                    </div>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Click an empty tile below to set the pick number, then “Place” a player from the Available list.
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
@@ -434,9 +505,7 @@ export default function LiveDraftPage() {
                 <div className="mt-1 text-3xl sm:text-4xl font-bold tabular-nums tracking-tight">
                   {pad2(liveMin)}:{pad2(liveSec)}
                 </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  {event?.isPaused ? "Paused — clock held" : "Time remaining"}
-                </div>
+                <div className="mt-1 text-[11px] text-muted-foreground">{event?.isPaused ? "Paused — clock held" : "Time remaining"}</div>
               </div>
 
               <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm">
@@ -467,18 +536,16 @@ export default function LiveDraftPage() {
             </div>
           </div>
 
+          {err ? <div className="text-sm text-rose-600">{err}</div> : null}
+
           {/* Draft order strip */}
           <div className="rounded-2xl border bg-card p-3 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-sm font-semibold">Draft Order</div>
-                <div className="text-[11px] text-muted-foreground">
-                  Live snake order · shows the next {upcoming.length} picks
-                </div>
+                <div className="text-[11px] text-muted-foreground">Live snake order · shows the next {upcoming.length} picks</div>
               </div>
-              <div className="flex items-center gap-2">
-                {event?.isPaused ? <Pill tone="warn">Paused</Pill> : <Pill tone="good">Running</Pill>}
-              </div>
+              <div className="flex items-center gap-2">{event?.isPaused ? <Pill tone="warn">Paused</Pill> : <Pill tone="good">Running</Pill>}</div>
             </div>
 
             <div className="mt-3 overflow-x-auto">
@@ -507,9 +574,7 @@ export default function LiveDraftPage() {
                         </span>
                         {isNow ? <Pill tone="good">On clock</Pill> : isNext ? <Pill tone="warn">Next</Pill> : null}
                       </div>
-                      <div className="mt-1 text-sm font-semibold truncate max-w-[220px]">
-                        {u.team?.name ?? "—"}
-                      </div>
+                      <div className="mt-1 text-sm font-semibold truncate max-w-[220px]">{u.team?.name ?? "—"}</div>
                       <div className="text-[11px] text-muted-foreground">
                         R{u.round} · P{u.pickInRound}
                       </div>
@@ -522,7 +587,7 @@ export default function LiveDraftPage() {
         </div>
       </div>
 
-      {/* Picked big board + available players */}
+      {/* Big board + available */}
       <div className="mt-5 grid grid-cols-1 xl:grid-cols-12 gap-4">
         {/* BIG BOARD */}
         <div className="xl:col-span-8">
@@ -530,63 +595,92 @@ export default function LiveDraftPage() {
             <div className="px-4 sm:px-5 py-4 border-b">
               <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
                 <div>
-                  <div className="text-sm font-semibold">Big Board (Picked)</div>
+                  <div className="text-sm font-semibold">Big Board</div>
                   <div className="text-[11px] sm:text-xs text-muted-foreground">
-                    Coaches draft from their Draft Boards — this screen is display-only.
+                    Auto-populated tiles = {totalSlots || "—"} picks ({rounds || "—"} rounds × {teamCount || "—"} teams)
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Pill tone="neutral">{picks.length} picks</Pill>
-                  <Pill tone="neutral">{teams.length} teams</Pill>
+                  <Pill tone="neutral">{picks.length} filled</Pill>
+                  <Pill tone="neutral">{Math.max(0, totalSlots - picks.length)} open</Pill>
                 </div>
               </div>
             </div>
 
-            {/* Responsive tiles (no horizontal scroll) */}
             <div className="p-3 sm:p-4">
-              {picks.length === 0 ? (
+              {teamCount === 0 ? (
                 <div className="rounded-2xl border bg-muted/30 p-8 text-center">
-                  <div className="text-sm font-semibold">No picks yet</div>
-                  <div className="mt-1 text-sm text-muted-foreground">This will fill in live as picks are made.</div>
+                  <div className="text-sm font-semibold">No teams yet</div>
+                  <div className="mt-1 text-sm text-muted-foreground">Once teams sync, pick tiles will auto-populate.</div>
                 </div>
               ) : (
-                <div
-                  className={cx(
-                    "grid gap-2 sm:gap-3",
-                    "grid-cols-2 md:grid-cols-3 lg:grid-cols-4"
-                  )}
-                >
-                  {picks.map((p) => {
-                    const r = ratingFromRank(p.player.rank);
+                <div className="grid gap-2 sm:gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                  {Array.from({ length: totalSlots }).map((_, idx) => {
+                    const overall = idx + 1;
+                    const pick = pickByOverall.get(overall) ?? null;
+                    const { round, index: teamIdx, posInRound } = snakeTeamIndexFromOverallPick(overall, teamCount);
+                    const team = teams[teamIdx] ?? null;
+
+                    const isEmpty = !pick;
+                    const isCurrent = overall === (event?.currentPick ?? 1);
+
                     return (
                       <div
-                        key={p.id}
-                        className="rounded-2xl border bg-background shadow-sm p-3"
+                        key={overall}
+                        className={cx(
+                          "rounded-2xl border bg-background shadow-sm p-3",
+                          isCurrent && "border-emerald-300/70 bg-emerald-50/60 dark:bg-emerald-950/25",
+                          isEmpty && "opacity-90"
+                        )}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-center gap-2 min-w-0">
-                            <span className="text-[10px] rounded-full border bg-muted px-2 py-0.5">
-                              #{p.overallNumber}
-                            </span>
-                            <span className="text-[10px] text-muted-foreground truncate">
-                              {teamShort(p.team?.name ?? "")}
-                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!isAdmin) return;
+                                setAdminPickNumber(overall);
+                              }}
+                              className={cx(
+                                "text-[10px] rounded-full border bg-muted px-2 py-0.5",
+                                isAdmin && "hover:bg-muted/70 transition"
+                              )}
+                              title={isAdmin ? "Set admin pick number to this tile" : undefined}
+                            >
+                              #{overall}
+                            </button>
+                            <span className="text-[10px] text-muted-foreground truncate">{teamShort(team?.name ?? "")}</span>
                           </div>
                           <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                            R{p.round} · P{p.pickInRound}
+                            R{round} · P{posInRound + 1}
                           </span>
                         </div>
 
                         <div className="mt-2">
-                          <div className="font-semibold leading-snug line-clamp-2">
-                            {p.player.fullName}
-                          </div>
-                          <div className="mt-1 flex items-center justify-between gap-2">
-                            <div className="text-[11px] text-muted-foreground truncate">
-                              {p.team?.name ?? "—"}
-                            </div>
-                            <Stars value={r} size="sm" showEmpty={false} />
-                          </div>
+                          {pick ? (
+                            <>
+                              <div className="font-semibold leading-snug line-clamp-2">{pick.player.fullName}</div>
+                              <div className="mt-1 flex items-center justify-between gap-2">
+                                <div className="text-[11px] text-muted-foreground truncate">{pick.team?.name ?? "—"}</div>
+                                <Stars value={ratingFromRank(pick.player.rank)} size="sm" showEmpty={false} />
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="font-semibold leading-snug text-muted-foreground">Open</div>
+                              <div className="mt-1 text-[11px] text-muted-foreground truncate">{team?.name ?? "—"}</div>
+                              {isAdmin ? (
+                                <div className="mt-2">
+                                  <button
+                                    onClick={() => setAdminPickNumber(overall)}
+                                    className="h-8 w-full rounded-md border text-xs hover:bg-muted"
+                                  >
+                                    Set as target pick
+                                  </button>
+                                </div>
+                              ) : null}
+                            </>
+                          )}
                         </div>
                       </div>
                     );
@@ -596,7 +690,7 @@ export default function LiveDraftPage() {
             </div>
 
             <div className="px-4 sm:px-5 py-3 border-t text-[11px] sm:text-xs text-muted-foreground">
-              Showing star rating derived from player rank (when rank is present).
+              Empty tiles exist so the board is fully built before drafting starts.
             </div>
           </div>
         </div>
@@ -611,6 +705,11 @@ export default function LiveDraftPage() {
                   Showing <span className="font-semibold">{filteredRemaining.length}</span> of{" "}
                   <span className="font-semibold">{remaining.length}</span>
                 </div>
+                {isAdmin ? (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    Admin target pick: <span className="font-semibold tabular-nums">#{adminPickNumber}</span>
+                  </div>
+                ) : null}
               </div>
               <input
                 value={q}
@@ -623,7 +722,7 @@ export default function LiveDraftPage() {
             <div className="mt-3 rounded-2xl border overflow-hidden">
               <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold sticky top-0">
                 <div className="col-span-8">Player</div>
-                <div className="col-span-4 text-right">Rating</div>
+                <div className="col-span-4 text-right">Actions</div>
               </div>
 
               {filteredRemaining.length === 0 ? (
@@ -631,13 +730,30 @@ export default function LiveDraftPage() {
               ) : (
                 <div className="divide-y max-h-[72vh] overflow-auto">
                   {filteredRemaining.map((p) => (
-                    <div
-                      key={p.id}
-                      className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition"
-                    >
-                      <div className="col-span-8 font-semibold truncate">{p.fullName}</div>
-                      <div className="col-span-4 flex items-center justify-end">
-                        <Stars value={p.rating} size="sm" />
+                    <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition">
+                      <div className="col-span-8 min-w-0">
+                        <div className="font-semibold truncate">{p.fullName}</div>
+                        <div className="mt-1">
+                          <Stars value={p.rating} size="sm" />
+                        </div>
+                      </div>
+
+                      <div className="col-span-4 flex items-center justify-end gap-2">
+                        {isAdmin ? (
+                          <button
+                            disabled={busyPlayerId === p.id}
+                            onClick={() => doAdminPlace(p.id, adminPickNumber)}
+                            className={cx(
+                              "h-9 rounded-md px-3 text-xs border",
+                              "bg-amber-600 text-white border-amber-700 hover:bg-amber-700",
+                              busyPlayerId === p.id && "opacity-70"
+                            )}
+                          >
+                            {busyPlayerId === p.id ? "Placing…" : "Place"}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -646,7 +762,7 @@ export default function LiveDraftPage() {
             </div>
 
             <div className="mt-3 text-xs text-muted-foreground">
-              This list is your eligible/undrafted pool.
+              Coaches draft from their own Draft Board page. Admins can force any pick from here.
             </div>
           </div>
         </div>
