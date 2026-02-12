@@ -104,7 +104,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         (token as any).id = (user as any).id;
         (token as any).role = (user as any).role;
-      } else if (!(token as any).role && (token as any).email) {
+      } else if ((!(token as any).id || !(token as any).role) && (token as any).email) {
         const email = normEmail((token as any).email);
         if (email) {
           const dbUser = await prisma.user.findUnique({ where: { email }, select: { id: true, role: true } });
