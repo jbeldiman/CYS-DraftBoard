@@ -8,7 +8,9 @@ export const runtime = "nodejs";
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
+
     const meId = (session?.user as any)?.id as string | undefined;
+    const meEmail = (session?.user as any)?.email as string | undefined;
     const meRole = (session?.user as any)?.role as string | undefined;
 
     const event =
@@ -26,7 +28,7 @@ export async function GET() {
         teams: [],
         recentPicks: [],
         counts: { undrafted: 0, drafted: 0 },
-        me: meId ? { id: meId, role: meRole ?? null } : null,
+        me: meId || meEmail ? { id: meId ?? null, email: meEmail ?? null, role: meRole ?? null } : null,
         myTeam: null,
       });
     }
@@ -63,11 +65,17 @@ export async function GET() {
 
     let myTeam: { id: string; name: string; order: number } | null = null;
 
-    if (meId) {
+    if (meId || meEmail) {
+      const candidates = [meId, meEmail].filter(Boolean) as string[];
+
       const t = await prisma.draftTeam.findFirst({
-        where: { draftEventId: event.id, coachUserId: meId },
+        where: {
+          draftEventId: event.id,
+          coachUserId: { in: candidates },
+        },
         select: { id: true, name: true, order: true },
       });
+
       myTeam = t ?? null;
     }
 
@@ -76,7 +84,7 @@ export async function GET() {
       teams,
       recentPicks: recentPicks.reverse(),
       counts: { undrafted, drafted },
-      me: meId ? { id: meId, role: meRole ?? null } : null,
+      me: meId || meEmail ? { id: meId ?? null, email: meEmail ?? null, role: meRole ?? null } : null,
       myTeam,
     });
   } catch (e) {

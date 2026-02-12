@@ -5,16 +5,9 @@ import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
 
-function isAdmin(session: any) {
-  return session?.user && (session.user as any).role === "ADMIN";
-}
-
-function snakeSlot(round: number, teamIndex: number, teamCount: number) {
-  const reverse = round % 2 === 0;
-  const posInRound = reverse ? teamCount - 1 - teamIndex : teamIndex;
-  const pickInRound = posInRound + 1;
-  const overallNumber = (round - 1) * teamCount + posInRound + 1;
-  return { pickInRound, overallNumber };
+function isAdminOrBoard(session: any) {
+  const role = (session?.user as any)?.role as string | undefined;
+  return !!session?.user && (role === "ADMIN" || role === "BOARD");
 }
 
 function snakeTeamIndexFromOverallPick(overallPick1: number, teamCount: number) {
@@ -31,6 +24,14 @@ function snakePickInRoundFromOverall(overallPick1: number, teamCount: number) {
   if (teamCount <= 0) return 1;
   const p0 = overallPick1 - 1;
   return (p0 % teamCount) + 1;
+}
+
+function snakeOverallFromRoundTeamIndex(round: number, teamIndex: number, teamCount: number) {
+  const reverse = round % 2 === 0;
+  const posInRound = reverse ? teamCount - 1 - teamIndex : teamIndex;
+  const overallNumber = (round - 1) * teamCount + posInRound + 1;
+  const pickInRound = posInRound + 1;
+  return { overallNumber, pickInRound };
 }
 
 function parseDraftCost(v: unknown): number | null {
@@ -79,7 +80,6 @@ async function findNthUpcomingOpenPickOverallForTeam(args: {
       where: { draftEventId, overallNumber: overall },
       select: { id: true },
     });
-
     if (occupied) continue;
 
     found += 1;
@@ -91,17 +91,35 @@ async function findNthUpcomingOpenPickOverallForTeam(args: {
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  if (!isAdmin(session)) {
+  if (!isAdminOrBoard(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const body = await req.json().catch(() => ({}));
-  const teamId = String(body.teamId ?? "");
-  const playerId = String(body.playerId ?? "");
-  const round = Number(body.round ?? 0);
+  const body = await req.json().catch(() => ({} as any));
 
-  if (!teamId || !playerId || !Number.isFinite(round) || round < 1) {
-    return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+  const playerId = String(body?.playerId ?? "");
+  const overallNumberRaw = body?.overallNumber ?? body?.pickNumber ?? null;
+
+  const teamIdRaw = body?.teamId != null ? String(body.teamId) : "";
+  const roundRaw = body?.round != null ? Number(body.round) : NaN;
+
+  const overallNumber =
+    typeof overallNumberRaw === "number"
+      ? overallNumberRaw
+      : typeof overallNumberRaw === "string"
+      ? Number(overallNumberRaw)
+      : NaN;
+
+  if (!playerId) return NextResponse.json({ error: "Missing playerId" }, { status: 400 });
+
+  const usingOverall = Number.isFinite(overallNumber) && overallNumber >= 1;
+  const usingRoundTeam = !!teamIdRaw && Number.isFinite(roundRaw) && roundRaw >= 1;
+
+  if (!usingOverall && !usingRoundTeam) {
+    return NextResponse.json(
+      { error: "Invalid payload. Send { overallNumber, playerId } (or { pickNumber, playerId }) OR { teamId, round, playerId }." },
+      { status: 400 }
+    );
   }
 
   try {
@@ -115,6 +133,7 @@ export async function POST(req: Request) {
       }));
 
     if (!event) return NextResponse.json({ error: "No event found" }, { status: 400 });
+    if (event.phase !== "LIVE") return NextResponse.json({ error: "Draft is not live" }, { status: 400 });
 
     const teams = await prisma.draftTeam.findMany({
       where: { draftEventId: event.id },
@@ -122,11 +141,33 @@ export async function POST(req: Request) {
       select: { id: true },
     });
 
-    const teamIndex = teams.findIndex((t) => t.id === teamId);
-    if (teamIndex < 0) return NextResponse.json({ error: "Team not found" }, { status: 404 });
+    if (!teams.length) return NextResponse.json({ error: "No teams found" }, { status: 400 });
 
     const teamCount = teams.length;
-    const { pickInRound, overallNumber } = snakeSlot(round, teamIndex, teamCount);
+
+    let resolvedOverall = overallNumber;
+    let resolvedTeamId = teamIdRaw;
+    let resolvedRound = roundRaw;
+    let resolvedPickInRound = 1;
+    let resolvedTeamIndex = -1;
+
+    if (usingOverall) {
+      const { round, index } = snakeTeamIndexFromOverallPick(resolvedOverall, teamCount);
+      const team = teams[index] ?? null;
+      if (!team) return NextResponse.json({ error: "Unable to resolve team for that pick" }, { status: 400 });
+
+      resolvedTeamId = team.id;
+      resolvedTeamIndex = index;
+      resolvedRound = round;
+      resolvedPickInRound = snakePickInRoundFromOverall(resolvedOverall, teamCount);
+    } else {
+      resolvedTeamIndex = teams.findIndex((t) => t.id === resolvedTeamId);
+      if (resolvedTeamIndex < 0) return NextResponse.json({ error: "Team not found" }, { status: 404 });
+
+      const slot = snakeOverallFromRoundTeamIndex(resolvedRound, resolvedTeamIndex, teamCount);
+      resolvedOverall = slot.overallNumber;
+      resolvedPickInRound = slot.pickInRound;
+    }
 
     const player = await prisma.draftPlayer.findUnique({
       where: { id: playerId },
@@ -137,46 +178,35 @@ export async function POST(req: Request) {
     if (player.draftEventId !== event.id) {
       return NextResponse.json({ error: "Player is not in this draft event" }, { status: 400 });
     }
-    if (!player.isDraftEligible) {
-      return NextResponse.json({ error: "Player is not draft-eligible" }, { status: 400 });
-    }
+    if (!player.isDraftEligible) return NextResponse.json({ error: "Player is not draft-eligible" }, { status: 400 });
     if (player.isDrafted) return NextResponse.json({ error: "Player already drafted" }, { status: 409 });
 
     const created = await prisma.$transaction(async (tx) => {
       const slotExisting = await tx.draftPick.findFirst({
-        where: { draftEventId: event.id, teamId, round, pickInRound },
+        where: {
+          draftEventId: event.id,
+          overallNumber: resolvedOverall,
+        },
         select: { id: true },
       });
-      if (slotExisting) {
-        throw new Error("That pick slot is already filled");
-      }
-
-      const overallExisting = await tx.draftPick.findFirst({
-        where: { draftEventId: event.id, overallNumber },
-        select: { id: true },
-      });
-      if (overallExisting) {
-        throw new Error("That overall pick is already filled");
-      }
+      if (slotExisting) throw new Error("That overall pick is already filled");
 
       const playerExisting = await tx.draftPick.findFirst({
         where: { draftEventId: event.id, playerId },
         select: { id: true },
       });
-      if (playerExisting) {
-        throw new Error("That player has already been drafted");
-      }
+      if (playerExisting) throw new Error("That player has already been drafted");
 
       const now = new Date();
 
       const pick = await tx.draftPick.create({
         data: {
           draftEventId: event.id,
-          teamId,
+          teamId: resolvedTeamId,
           playerId,
-          round,
-          pickInRound,
-          overallNumber,
+          round: resolvedRound,
+          pickInRound: resolvedPickInRound,
+          overallNumber: resolvedOverall,
           madeAt: now,
         },
         select: { id: true, overallNumber: true },
@@ -186,12 +216,11 @@ export async function POST(req: Request) {
         where: { id: playerId },
         data: {
           isDrafted: true,
-          draftedTeamId: teamId,
+          draftedTeamId: resolvedTeamId,
           draftedAt: now,
         },
       });
 
-      // ---------- SIBLING AUTO-PICK (admin flow) ----------
       let siblingAutoPick: { id: string; overallNumber: number } | null = null;
 
       const costRow = await tx.siblingDraftCost.findUnique({
@@ -233,9 +262,9 @@ export async function POST(req: Request) {
             const targetOverall = await findNthUpcomingOpenPickOverallForTeam({
               tx,
               draftEventId: event.id,
-              fromOverallExclusive: overallNumber,
+              fromOverallExclusive: resolvedOverall,
               teams,
-              teamIndex,
+              teamIndex: resolvedTeamIndex,
               n: costN,
             });
 
@@ -245,7 +274,7 @@ export async function POST(req: Request) {
             const sibPick = await tx.draftPick.create({
               data: {
                 draftEventId: event.id,
-                teamId,
+                teamId: resolvedTeamId,
                 playerId: siblingPlayer.id,
                 round: sibRound,
                 pickInRound: sibPickInRound,
@@ -259,7 +288,7 @@ export async function POST(req: Request) {
               where: { id: siblingPlayer.id },
               data: {
                 isDrafted: true,
-                draftedTeamId: teamId,
+                draftedTeamId: resolvedTeamId,
                 draftedAt: now,
               },
             });
@@ -269,8 +298,8 @@ export async function POST(req: Request) {
         }
       }
 
-      if (event.phase === "LIVE" && (event.currentPick ?? 1) === overallNumber) {
-        const nextPick = await findNextOpenOverall(tx, event.id, overallNumber + 1);
+      if ((event.currentPick ?? 1) === resolvedOverall) {
+        const nextPick = await findNextOpenOverall(tx, event.id, resolvedOverall + 1);
 
         if (!event.isPaused) {
           const endsAt = new Date(now.getTime() + (event.pickClockSeconds ?? 120) * 1000);
@@ -292,6 +321,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       ok: true,
       id: created.pick.id,
+      overallNumber: created.pick.overallNumber,
       siblingAutoPick: created.siblingAutoPick,
     });
   } catch (e: any) {
@@ -301,7 +331,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: msg }, { status: 409 });
     }
 
-    console.error(e);
-    return NextResponse.json({ error: "Failed to create pick" }, { status: 500 });
+    console.error("POST /api/draft/admin/pick error:", e);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

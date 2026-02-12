@@ -58,7 +58,10 @@ function Stars({
         const on = i < v;
         if (!showEmpty && !on) return null;
         return (
-          <span key={i} className={cx("leading-none", on ? "text-amber-500" : "text-muted-foreground/30")}>
+          <span
+            key={i}
+            className={cx("leading-none", on ? "text-amber-500" : "text-muted-foreground/30")}
+          >
             ★
           </span>
         );
@@ -120,9 +123,9 @@ function teamShort(name: string) {
   const s = (name || "").trim();
   if (!s) return "—";
   const parts = s.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 8);
+  if (parts.length === 1) return parts[0].slice(0, 10);
   const initials = parts.map((p) => p[0]?.toUpperCase()).join("");
-  return initials.slice(0, 4);
+  return initials.slice(0, 6);
 }
 
 function ratingFromRank(rank: number | null) {
@@ -207,13 +210,13 @@ export default function LiveDraftPage() {
       const res = await fetch(FALLBACK_TEAMS_ENDPOINT, { cache: "no-store" });
       if (!res.ok) throw new Error("no teams");
       const json = await res.json().catch(() => ({}));
-      const t = (json.teams ?? json ?? []) as any[];
+      const t = (json?.teams ?? json ?? []) as any[];
       const mapped: Team[] = (Array.isArray(t) ? t : []).map((x: any, i: number) => ({
-        id: x.id,
-        name: x.name ?? x.teamName ?? `Team ${i + 1}`,
-        order: x.order ?? x.pickOrder ?? i + 1,
+        id: String(x?.id ?? ""),
+        name: String(x?.name ?? x?.teamName ?? `Team ${i + 1}`),
+        order: Number(x?.order ?? x?.pickOrder ?? i + 1),
       }));
-      setTeams(mapped.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
+      setTeams(mapped.filter((x) => x.id && x.name).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0)));
     } catch {
       setTeams([]);
     }
@@ -236,13 +239,19 @@ export default function LiveDraftPage() {
 
       setRemaining(
         (json.players ?? []).map((p: any) => {
-          const rawRating = p.rating ?? p.boardRating ?? p.playerRating ?? null;
-          const rank = p.rank ?? p.playerRank ?? null;
-          const fallback = ratingFromRank(rank);
+          const rawRating = p?.rating ?? p?.boardRating ?? p?.playerRating ?? null;
+          const rank = p?.rank ?? p?.playerRank ?? null;
+          const fallback = ratingFromRank(typeof rank === "number" ? rank : Number(rank) || null);
+          const rating =
+            typeof rawRating === "number"
+              ? rawRating
+              : rawRating != null && rawRating !== ""
+              ? Number(rawRating)
+              : null;
           return {
-            id: p.id,
-            fullName: p.fullName,
-            rating: rawRating ?? fallback,
+            id: String(p.id),
+            fullName: String(p.fullName ?? ""),
+            rating: Number.isFinite(rating as any) ? (rating as number) : fallback,
           } as RemainingPlayer;
         })
       );
@@ -266,7 +275,7 @@ export default function LiveDraftPage() {
   }, []);
 
   useEffect(() => {
-    loadTeamsFallbackIfNeeded(state);
+    void loadTeamsFallbackIfNeeded(state);
   }, [state?.teams?.length]);
 
   const event = state?.event ?? null;
@@ -380,6 +389,18 @@ export default function LiveDraftPage() {
     return remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s));
   }, [remaining, q]);
 
+  const boardRows = useMemo(() => {
+    if (teamCount <= 0 || rounds <= 0) return [] as number[][];
+    const rows: number[][] = [];
+    for (let r = 1; r <= rounds; r++) {
+      const start = (r - 1) * teamCount + 1;
+      const arr = Array.from({ length: teamCount }, (_, i) => start + i);
+      if (r % 2 === 0) arr.reverse();
+      rows.push(arr);
+    }
+    return rows;
+  }, [teamCount, rounds]);
+
   async function doAdminPlace(playerId: string, pickNum: number) {
     setErr(null);
     setBusyPlayerId(playerId);
@@ -453,7 +474,6 @@ export default function LiveDraftPage() {
 
   return (
     <div className="py-3">
-      {/* Header / status */}
       <div
         className={cx(
           "rounded-3xl border p-4 sm:p-6 shadow-sm",
@@ -505,7 +525,9 @@ export default function LiveDraftPage() {
                 <div className="mt-1 text-3xl sm:text-4xl font-bold tabular-nums tracking-tight">
                   {pad2(liveMin)}:{pad2(liveSec)}
                 </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">{event?.isPaused ? "Paused — clock held" : "Time remaining"}</div>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  {event?.isPaused ? "Paused — clock held" : "Time remaining"}
+                </div>
               </div>
 
               <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm">
@@ -538,14 +560,15 @@ export default function LiveDraftPage() {
 
           {err ? <div className="text-sm text-rose-600">{err}</div> : null}
 
-          {/* Draft order strip */}
           <div className="rounded-2xl border bg-card p-3 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-sm font-semibold">Draft Order</div>
                 <div className="text-[11px] text-muted-foreground">Live snake order · shows the next {upcoming.length} picks</div>
               </div>
-              <div className="flex items-center gap-2">{event?.isPaused ? <Pill tone="warn">Paused</Pill> : <Pill tone="good">Running</Pill>}</div>
+              <div className="flex items-center gap-2">
+                {event?.isPaused ? <Pill tone="warn">Paused</Pill> : <Pill tone="good">Running</Pill>}
+              </div>
             </div>
 
             <div className="mt-3 overflow-x-auto">
@@ -587,9 +610,7 @@ export default function LiveDraftPage() {
         </div>
       </div>
 
-      {/* Big board + available */}
       <div className="mt-5 grid grid-cols-1 xl:grid-cols-12 gap-4">
-        {/* BIG BOARD */}
         <div className="xl:col-span-8">
           <div className="rounded-3xl border bg-card shadow-sm overflow-hidden">
             <div className="px-4 sm:px-5 py-4 border-b">
@@ -597,7 +618,7 @@ export default function LiveDraftPage() {
                 <div>
                   <div className="text-sm font-semibold">Big Board</div>
                   <div className="text-[11px] sm:text-xs text-muted-foreground">
-                    Auto-populated tiles = {totalSlots || "—"} picks ({rounds || "—"} rounds × {teamCount || "—"} teams)
+                    Tiles = {totalSlots || "—"} picks ({rounds || "—"} rounds × {teamCount || "—"} teams) · Snake rows
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -614,88 +635,98 @@ export default function LiveDraftPage() {
                   <div className="mt-1 text-sm text-muted-foreground">Once teams sync, pick tiles will auto-populate.</div>
                 </div>
               ) : (
-                <div className="grid gap-2 sm:gap-3 grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                  {Array.from({ length: totalSlots }).map((_, idx) => {
-                    const overall = idx + 1;
-                    const pick = pickByOverall.get(overall) ?? null;
-                    const { round, index: teamIdx, posInRound } = snakeTeamIndexFromOverallPick(overall, teamCount);
-                    const team = teams[teamIdx] ?? null;
+                <div className="overflow-x-auto">
+                  <div className="min-w-max">
+                    <div className="space-y-2 sm:space-y-3">
+                      {boardRows.map((row, rIdx) => (
+                        <div
+                          key={`r-${rIdx}`}
+                          className="grid gap-2 sm:gap-3"
+                          style={{ gridTemplateColumns: `repeat(${teamCount}, minmax(0, 1fr))` }}
+                        >
+                          {row.map((overall) => {
+                            const pick = pickByOverall.get(overall) ?? null;
+                            const { round, index: teamIdx, posInRound } = snakeTeamIndexFromOverallPick(overall, teamCount);
+                            const team = teams[teamIdx] ?? null;
 
-                    const isEmpty = !pick;
-                    const isCurrent = overall === (event?.currentPick ?? 1);
+                            const isEmpty = !pick;
+                            const isCurrent = overall === (event?.currentPick ?? 1);
 
-                    return (
-                      <div
-                        key={overall}
-                        className={cx(
-                          "rounded-2xl border bg-background shadow-sm p-3",
-                          isCurrent && "border-emerald-300/70 bg-emerald-50/60 dark:bg-emerald-950/25",
-                          isEmpty && "opacity-90"
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (!isAdmin) return;
-                                setAdminPickNumber(overall);
-                              }}
-                              className={cx(
-                                "text-[10px] rounded-full border bg-muted px-2 py-0.5",
-                                isAdmin && "hover:bg-muted/70 transition"
-                              )}
-                              title={isAdmin ? "Set admin pick number to this tile" : undefined}
-                            >
-                              #{overall}
-                            </button>
-                            <span className="text-[10px] text-muted-foreground truncate">{teamShort(team?.name ?? "")}</span>
-                          </div>
-                          <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                            R{round} · P{posInRound + 1}
-                          </span>
-                        </div>
-
-                        <div className="mt-2">
-                          {pick ? (
-                            <>
-                              <div className="font-semibold leading-snug line-clamp-2">{pick.player.fullName}</div>
-                              <div className="mt-1 flex items-center justify-between gap-2">
-                                <div className="text-[11px] text-muted-foreground truncate">{pick.team?.name ?? "—"}</div>
-                                <Stars value={ratingFromRank(pick.player.rank)} size="sm" showEmpty={false} />
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="font-semibold leading-snug text-muted-foreground">Open</div>
-                              <div className="mt-1 text-[11px] text-muted-foreground truncate">{team?.name ?? "—"}</div>
-                              {isAdmin ? (
-                                <div className="mt-2">
-                                  <button
-                                    onClick={() => setAdminPickNumber(overall)}
-                                    className="h-8 w-full rounded-md border text-xs hover:bg-muted"
-                                  >
-                                    Set as target pick
-                                  </button>
+                            return (
+                              <div
+                                key={overall}
+                                className={cx(
+                                  "rounded-2xl border bg-background shadow-sm p-3",
+                                  isCurrent && "border-emerald-300/70 bg-emerald-50/60 dark:bg-emerald-950/25",
+                                  isEmpty && "opacity-90"
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (!isAdmin) return;
+                                        setAdminPickNumber(overall);
+                                      }}
+                                      className={cx(
+                                        "text-[10px] rounded-full border bg-muted px-2 py-0.5",
+                                        isAdmin && "hover:bg-muted/70 transition"
+                                      )}
+                                      title={isAdmin ? "Set admin pick number to this tile" : undefined}
+                                    >
+                                      #{overall}
+                                    </button>
+                                    <span className="text-[10px] text-muted-foreground truncate">{teamShort(team?.name ?? "")}</span>
+                                  </div>
+                                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                                    R{round} · P{posInRound + 1}
+                                  </span>
                                 </div>
-                              ) : null}
-                            </>
-                          )}
+
+                                <div className="mt-2">
+                                  {pick ? (
+                                    <>
+                                      <div className="font-semibold leading-snug line-clamp-2">{pick.player.fullName}</div>
+                                      <div className="mt-1 flex items-center justify-between gap-2">
+                                        <div className="text-[11px] text-muted-foreground truncate">{pick.team?.name ?? "—"}</div>
+                                        <Stars value={ratingFromRank(pick.player.rank)} size="sm" showEmpty={false} />
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <div className="font-semibold leading-snug text-muted-foreground">Open</div>
+                                      <div className="mt-1 text-[11px] text-muted-foreground truncate">{team?.name ?? "—"}</div>
+                                      {isAdmin ? (
+                                        <div className="mt-2">
+                                          <button
+                                            onClick={() => setAdminPickNumber(overall)}
+                                            className="h-8 w-full rounded-md border text-xs hover:bg-muted"
+                                          >
+                                            Set as target pick
+                                          </button>
+                                        </div>
+                                      ) : null}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      </div>
-                    );
-                  })}
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
 
             <div className="px-4 sm:px-5 py-3 border-t text-[11px] sm:text-xs text-muted-foreground">
-              Empty tiles exist so the board is fully built before drafting starts.
+              Snake layout: row 1 left→right, row 2 right→left, row 3 left→right, etc. Columns always equal team count.
             </div>
           </div>
         </div>
 
-        {/* AVAILABLE PLAYERS */}
         <div className="xl:col-span-4">
           <div className="rounded-3xl border bg-card p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">

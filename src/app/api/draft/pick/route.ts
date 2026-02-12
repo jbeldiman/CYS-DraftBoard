@@ -58,9 +58,8 @@ async function findNthUpcomingOpenPickOverallForTeam(args: {
 
   const teamCount = teams.length;
   if (teamCount <= 0) throw new Error("No teams found for this draft event.");
-  
-  const maxScan = fromOverallExclusive + teamCount * 60;
 
+  const maxScan = fromOverallExclusive + teamCount * 60;
   let found = 0;
 
   for (let overall = fromOverallExclusive + 1; overall <= maxScan; overall++) {
@@ -71,7 +70,6 @@ async function findNthUpcomingOpenPickOverallForTeam(args: {
       where: { draftEventId, overallNumber: overall },
       select: { id: true },
     });
-
     if (occupied) continue;
 
     found += 1;
@@ -87,8 +85,8 @@ export async function POST(req: Request) {
 
   const role = (session.user as any).role as string | undefined;
   const userId = (session.user as any).id as string | undefined;
+  const userEmail = (session.user as any).email as string | undefined;
 
-  if (!userId) return jsonErr("Unauthorized", 401);
   if (role !== "COACH") return jsonErr("Forbidden", 403);
 
   let body: any = null;
@@ -114,7 +112,6 @@ export async function POST(req: Request) {
 
       if (!event) throw new Error("No draft event found.");
       if (event.phase !== "LIVE") throw new Error("Draft is not live.");
-      if (event.isPaused) throw new Error("Draft is paused.");
 
       const teams = await tx.draftTeam.findMany({
         where: { draftEventId: event.id },
@@ -133,21 +130,21 @@ export async function POST(req: Request) {
       const onClockTeam = teams[onClockIndex];
       if (!onClockTeam) throw new Error("Unable to resolve on-clock team.");
 
-      if (onClockTeam.coachUserId !== userId) {
+      const coachKey = String(onClockTeam.coachUserId ?? "");
+      const matchesUserId = !!userId && coachKey === userId;
+      const matchesEmail = !!userEmail && coachKey.toLowerCase() === userEmail.toLowerCase();
+
+      if (!matchesUserId && !matchesEmail) {
         throw new Error("It is not your team's turn to pick.");
       }
 
+      if (event.isPaused) {
+        throw new Error("Draft is paused.");
+      }
+
       const player = await tx.draftPlayer.findFirst({
-        where: {
-          id: playerId,
-          draftEventId: event.id,
-        },
-        select: {
-          id: true,
-          fullName: true,
-          isDraftEligible: true,
-          isDrafted: true,
-        },
+        where: { id: playerId, draftEventId: event.id },
+        select: { id: true, fullName: true, isDraftEligible: true, isDrafted: true, rank: true },
       });
 
       if (!player) throw new Error("Player not found for this draft event.");
@@ -161,10 +158,7 @@ export async function POST(req: Request) {
       if (existingPick) throw new Error("That player has already been drafted.");
 
       const existingSlot = await tx.draftPick.findFirst({
-        where: {
-          draftEventId: event.id,
-          overallNumber: overall,
-        },
+        where: { draftEventId: event.id, overallNumber: overall },
         select: { id: true },
       });
       if (existingSlot) throw new Error("This pick slot is already filled.");
@@ -194,24 +188,14 @@ export async function POST(req: Request) {
 
       await tx.draftPlayer.update({
         where: { id: playerId },
-        data: {
-          isDrafted: true,
-          draftedTeamId: onClockTeam.id,
-          draftedAt: now,
-        },
+        data: { isDrafted: true, draftedTeamId: onClockTeam.id, draftedAt: now },
       });
 
-      // ---------- SIBLING AUTO-PICK (if configured) ----------
-
+      // ---------- SIBLING AUTO-PICK ----------
       let siblingAutoPick: any = null;
 
       const costRow = await tx.siblingDraftCost.findUnique({
-        where: {
-          draftEventId_playerId: {
-            draftEventId: event.id,
-            playerId,
-          },
-        },
+        where: { draftEventId_playerId: { draftEventId: event.id, playerId } },
         select: { groupKey: true, draftCost: true },
       });
 
@@ -237,11 +221,8 @@ export async function POST(req: Request) {
               isDraftEligible: true,
               isDrafted: false,
             },
-            select: {
-              id: true,
-              fullName: true,
-              rank: true,
-            },
+            select: { id: true, fullName: true, rank: true },
+            orderBy: [{ rank: "asc" }, { fullName: "asc" }],
           });
 
           if (siblingPlayer) {
@@ -254,51 +235,56 @@ export async function POST(req: Request) {
               n: costN,
             });
 
-            const { round: sibRound } = snakeTeamIndexFromOverallPick(targetOverall, teamCount);
-            const sibPickInRound = snakePickInRoundFromOverall(targetOverall, teamCount);
-
-            siblingAutoPick = await tx.draftPick.create({
-              data: {
-                draftEventId: event.id,
-                teamId: onClockTeam.id,
-                playerId: siblingPlayer.id,
-                overallNumber: targetOverall,
-                round: sibRound,
-                pickInRound: sibPickInRound,
-                madeAt: now,
-              },
-              select: {
-                id: true,
-                overallNumber: true,
-                round: true,
-                pickInRound: true,
-                madeAt: true,
-                team: { select: { id: true, name: true, order: true } },
-                player: { select: { id: true, fullName: true, rank: true } },
-              },
+            const siblingSlot = await tx.draftPick.findFirst({
+              where: { draftEventId: event.id, overallNumber: targetOverall },
+              select: { id: true },
             });
 
-            await tx.draftPlayer.update({
-              where: { id: siblingPlayer.id },
-              data: {
-                isDrafted: true,
-                draftedTeamId: onClockTeam.id,
-                draftedAt: now,
-              },
-            });
+            if (!siblingSlot) {
+              const { round: sibRound } = snakeTeamIndexFromOverallPick(targetOverall, teamCount);
+              const sibPickInRound = snakePickInRoundFromOverall(targetOverall, teamCount);
+
+              siblingAutoPick = await tx.draftPick.create({
+                data: {
+                  draftEventId: event.id,
+                  teamId: onClockTeam.id,
+                  playerId: siblingPlayer.id,
+                  overallNumber: targetOverall,
+                  round: sibRound,
+                  pickInRound: sibPickInRound,
+                  madeAt: now,
+                },
+                select: {
+                  id: true,
+                  overallNumber: true,
+                  round: true,
+                  pickInRound: true,
+                  madeAt: true,
+                  team: { select: { id: true, name: true, order: true } },
+                  player: { select: { id: true, fullName: true, rank: true } },
+                },
+              });
+
+              await tx.draftPlayer.update({
+                where: { id: siblingPlayer.id },
+                data: { isDrafted: true, draftedTeamId: onClockTeam.id, draftedAt: now },
+              });
+            }
           }
         }
       }
 
       const nextOverallOpen = await findNextOpenOverall(tx, event.id, overall + 1);
-      const endsAt = new Date(now.getTime() + (event.pickClockSeconds ?? 120) * 1000);
+
+      const updateData: any = { currentPick: nextOverallOpen };
+      if (!event.isPaused) {
+        const endsAt = new Date(now.getTime() + (event.pickClockSeconds ?? 120) * 1000);
+        updateData.clockEndsAt = endsAt;
+      }
 
       await tx.draftEvent.update({
         where: { id: event.id },
-        data: {
-          currentPick: nextOverallOpen,
-          clockEndsAt: endsAt,
-        },
+        data: updateData,
       });
 
       return { pick, siblingAutoPick };
@@ -311,16 +297,16 @@ export async function POST(req: Request) {
       msg.includes("Unauthorized") || msg.includes("Forbidden")
         ? 403
         : msg.includes("not live") ||
-            msg.includes("paused") ||
-            msg.includes("turn") ||
-            msg.includes("eligible") ||
-            msg.includes("already") ||
-            msg.includes("Missing") ||
-            msg.includes("not found") ||
-            msg.includes("No teams") ||
-            msg.includes("Unable to find")
-          ? 400
-          : 500;
+          msg.includes("paused") ||
+          msg.includes("turn") ||
+          msg.includes("eligible") ||
+          msg.includes("already") ||
+          msg.includes("Missing") ||
+          msg.includes("not found") ||
+          msg.includes("No teams") ||
+          msg.includes("Unable to find")
+        ? 400
+        : 500;
 
     console.error("POST /api/draft/pick error:", e);
     return NextResponse.json({ error: msg }, { status });

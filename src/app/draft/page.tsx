@@ -110,12 +110,7 @@ type DraftState = {
     pauseRemainingSecs: number | null;
   } | null;
 
-  teams: {
-    id: string;
-    name: string;
-    order: number;
-  }[];
-
+  teams: { id: string; name: string; order: number }[];
   recentPicks: DraftPick[];
   counts: { undrafted: number; drafted: number };
 
@@ -132,7 +127,7 @@ type RemainingPlayer = {
 type DraftBoardEntry = {
   playerId: string;
   addedAt: number;
-  slot?: number; 
+  slot?: number;
 };
 
 const MY_TEAM_ID_KEY = "cys.myTeamId.v1";
@@ -384,12 +379,10 @@ export default function DraftPage() {
       const hasSlots = entries.some((e) => typeof e.slot === "number" && Number.isFinite(e.slot as any));
       if (hasSlots) return entries;
 
-    
-      const sorted = entries
+      return entries
         .slice()
         .sort((a, b) => (a.addedAt ?? 0) - (b.addedAt ?? 0))
         .map((e, idx) => ({ ...e, slot: idx + 1 }));
-      return sorted;
     };
 
     if (serverBoardSupportedRef.current !== false) {
@@ -481,13 +474,11 @@ export default function DraftPage() {
       const json = await res.json().catch(() => ({}));
 
       setRemaining(
-        (json.players ?? []).map((p: any) => {
-          return {
-            id: p.id,
-            fullName: p.fullName,
-            rating: extractRating(p),
-          } as RemainingPlayer;
-        })
+        (json.players ?? []).map((p: any) => ({
+          id: p.id,
+          fullName: p.fullName,
+          rating: extractRating(p),
+        }))
       );
     } catch {
       setRemaining([]);
@@ -615,7 +606,6 @@ export default function DraftPage() {
 
   const filteredRemaining = useMemo(() => {
     const s = q.trim().toLowerCase();
-
     const list = s ? remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s)) : remaining;
 
     return [...list].sort((a, b) => {
@@ -652,7 +642,7 @@ export default function DraftPage() {
   const boardBySlot = useMemo(() => {
     const m = new Map<number, DraftBoardEntry>();
     for (const e of draftBoard) {
-      const s = typeof e.slot === "number" && Number.isFinite(e.slot) ? e.slot : null;
+      const s = typeof e.slot === "number" && Number.isFinite(e.slot as any) ? e.slot : null;
       if (s && s > 0) m.set(s, e);
     }
     return m;
@@ -673,7 +663,9 @@ export default function DraftPage() {
     const next = draftBoard.filter((e) => e.slot !== slot && e.playerId !== playerId);
     next.push({ playerId, addedAt: Date.now(), slot });
     setDraftBoardAndPersist(
-      next.slice().sort((a, b) => (a.slot ?? 999999) - (b.slot ?? 999999) || (a.addedAt ?? 0) - (b.addedAt ?? 0)),
+      next
+        .slice()
+        .sort((a, b) => (a.slot ?? 999999) - (b.slot ?? 999999) || (a.addedAt ?? 0) - (b.addedAt ?? 0)),
       myTeamId
     );
   }
@@ -696,8 +688,7 @@ export default function DraftPage() {
 
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        const msg =
-          j?.error ?? (res.status === 404 ? "Missing endpoint: POST /api/draft/pick" : "Failed to draft player");
+        const msg = j?.error ?? (res.status === 404 ? "Missing endpoint: POST /api/draft/pick" : "Failed to draft player");
         throw new Error(msg);
       }
 
@@ -715,9 +706,11 @@ export default function DraftPage() {
   async function adminForcePick(playerId: string, pickNum: number) {
     setDraftErr(null);
     setDraftBusy(playerId);
+
     try {
       const r = await adminPlacePick(pickNum, playerId);
       if (!r.ok) throw new Error(r.error ?? "Admin pick failed");
+
       await loadState();
       await loadAllPicksOptional();
       await loadRemaining();
@@ -742,11 +735,10 @@ export default function DraftPage() {
   }
 
   const canDraftAny = isLive && isMyTurn && !draftBusy && teamCount > 0;
+
   const slotPickerList = useMemo(() => {
     const s = slotPickerQ.trim().toLowerCase();
-    const base = s
-      ? remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s))
-      : remaining.slice();
+    const base = s ? remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s)) : remaining.slice();
     return base
       .filter((p) => !usedPlayerIds.has(p.id))
       .sort((a, b) => {
@@ -763,7 +755,6 @@ export default function DraftPage() {
 
   return (
     <div className="py-3 sm:py-4 space-y-4">
-      {/* Header */}
       <div
         className={cx(
           "rounded-3xl border p-4 shadow-sm",
@@ -815,9 +806,7 @@ export default function DraftPage() {
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">Current Pick</div>
                 <div className="text-lg font-semibold tabular-nums">#{event?.currentPick ?? 1}</div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {onClockTeam?.name ?? (teamCount ? "—" : "No teams")}
-                </div>
+                <div className="text-xs text-muted-foreground truncate">{onClockTeam?.name ?? (teamCount ? "—" : "No teams")}</div>
               </div>
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
@@ -848,7 +837,6 @@ export default function DraftPage() {
 
         {draftErr ? <div className="mt-3 text-sm text-rose-600">{draftErr}</div> : null}
 
-        {/* Mobile tabs */}
         {isCompact ? (
           <div className="mt-4 flex items-center justify-between gap-3">
             <Segmented
@@ -864,7 +852,6 @@ export default function DraftPage() {
           </div>
         ) : null}
 
-        {/* Admin quick-pick bar */}
         {isAdmin ? (
           <div className="mt-4 rounded-2xl border bg-background p-3 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -881,13 +868,12 @@ export default function DraftPage() {
               </div>
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
-              This lets you assign a player to any overall pick (e.g. guarantee your son at pick 3).
+              Assign a player to any overall pick number (e.g. guarantee a player at pick 3).
             </div>
           </div>
         ) : null}
       </div>
 
-      {/* Roster */}
       <div className={cx(isCompact && mobileTab !== "roster" ? "hidden" : "block")}>
         <div className="rounded-3xl border bg-card p-4 shadow-sm">
           <div className="flex items-center justify-between gap-3">
@@ -923,7 +909,9 @@ export default function DraftPage() {
                     <div className="col-span-3 flex items-center">
                       <Stars value={rankToStars(p.player.rank)} />
                     </div>
-                    <div className="col-span-2 text-right text-xs text-muted-foreground tabular-nums">#{p.overallNumber}</div>
+                    <div className="col-span-2 text-right text-xs text-muted-foreground tabular-nums">
+                      #{p.overallNumber}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -932,9 +920,7 @@ export default function DraftPage() {
         </div>
       </div>
 
-      {/* Main */}
       <div className={cx("grid grid-cols-1 xl:grid-cols-12 gap-4", isCompact ? "xl:grid-cols-1" : "")}>
-        {/* Eligible */}
         <div className={cx("xl:col-span-8", isCompact && mobileTab !== "eligible" ? "hidden" : "block")}>
           <div className="rounded-3xl border bg-card p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
@@ -973,10 +959,7 @@ export default function DraftPage() {
                     return (
                       <div
                         key={p.id}
-                        className={cx(
-                          "grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition",
-                          isCompact && "py-3"
-                        )}
+                        className={cx("grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition", isCompact && "py-3")}
                       >
                         <div className="col-span-7 sm:col-span-6 min-w-0">
                           <div className="font-semibold truncate">{p.fullName}</div>
@@ -995,11 +978,8 @@ export default function DraftPage() {
                         <div className="col-span-5 sm:col-span-3 flex items-center justify-end gap-2">
                           <button
                             onClick={() => {
-                              
                               const emptySlot =
-                                rounds > 0
-                                  ? Array.from({ length: rounds }).findIndex((_, i) => !boardBySlot.has(i + 1)) + 1
-                                  : 0;
+                                rounds > 0 ? Array.from({ length: rounds }).findIndex((_, i) => !boardBySlot.has(i + 1)) + 1 : 0;
                               if (emptySlot > 0) setSlotPlayer(emptySlot, p.id);
                               else setDraftErr("Cannot add to board yet (teams not synced / rounds unknown).");
                             }}
@@ -1012,10 +992,7 @@ export default function DraftPage() {
                             <button
                               disabled={!!draftBusy}
                               onClick={() => adminForcePick(p.id, adminPickNumber)}
-                              className={cx(
-                                "h-9 sm:h-8 rounded-md px-3 text-xs border",
-                                "bg-amber-600 text-white border-amber-700 hover:bg-amber-700"
-                              )}
+                              className="h-9 sm:h-8 rounded-md px-3 text-xs border bg-amber-600 text-white border-amber-700 hover:bg-amber-700"
                             >
                               Place
                             </button>
@@ -1025,9 +1002,7 @@ export default function DraftPage() {
                               onClick={() => coachDraftPlayer(p.id)}
                               className={cx(
                                 "h-9 sm:h-8 rounded-md px-3 text-xs border",
-                                canDraft
-                                  ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
-                                  : "bg-muted text-muted-foreground"
+                                canDraft ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700" : "bg-muted text-muted-foreground"
                               )}
                               title={
                                 teamCount === 0
@@ -1056,15 +1031,13 @@ export default function DraftPage() {
           </div>
         </div>
 
-        {/* My Draft Board */}
         <div className={cx("xl:col-span-4", isCompact && mobileTab !== "board" ? "hidden" : "block")}>
           <div className="rounded-3xl border bg-card p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-sm font-semibold">My Draft Board</div>
                 <div className="text-xs text-muted-foreground">
-                  {teamCount > 0 ? `Auto-populated: ${rounds} rounds` : "Waiting for teams to sync"}
-                  {" · "}
+                  {teamCount > 0 ? `Auto-populated: ${rounds} rounds` : "Waiting for teams to sync"} ·{" "}
                   {serverBoardSupportedRef.current === true ? "Saved to backend" : "Saved locally"}
                 </div>
               </div>
@@ -1116,10 +1089,7 @@ export default function DraftPage() {
                         <div className="col-span-3 flex justify-end gap-2">
                           {player ? (
                             <>
-                              <button
-                                onClick={() => clearSlot(slot)}
-                                className="h-9 sm:h-8 rounded-md border px-3 sm:px-2 text-xs hover:bg-muted"
-                              >
+                              <button onClick={() => clearSlot(slot)} className="h-9 sm:h-8 rounded-md border px-3 sm:px-2 text-xs hover:bg-muted">
                                 ✕
                               </button>
 
@@ -1128,9 +1098,7 @@ export default function DraftPage() {
                                 onClick={() => coachDraftPlayer(player.id)}
                                 className={cx(
                                   "h-9 sm:h-8 rounded-md px-3 sm:px-2 text-xs border",
-                                  canDraft
-                                    ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
-                                    : "bg-muted text-muted-foreground"
+                                  canDraft ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700" : "bg-muted text-muted-foreground"
                                 )}
                                 title={
                                   !isLive
@@ -1168,15 +1136,12 @@ export default function DraftPage() {
             )}
 
             {isAdmin ? (
-              <div className="mt-3 text-xs text-muted-foreground">
-                Admin tip: you can also “Place” from the Eligible list to force any overall pick.
-              </div>
+              <div className="mt-3 text-xs text-muted-foreground">Admin tip: use “Place” from the Eligible list to force any overall pick.</div>
             ) : null}
           </div>
         </div>
       </div>
 
-      {/* Slot picker modal */}
       {slotPickerOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-xl rounded-3xl border bg-background shadow-xl">
@@ -1186,10 +1151,7 @@ export default function DraftPage() {
                   <div className="text-sm font-semibold">Select player for Round {slotPickerSlot ?? "?"}</div>
                   <div className="text-xs text-muted-foreground">Only eligible/undrafted players are shown.</div>
                 </div>
-                <button
-                  onClick={() => setSlotPickerOpen(false)}
-                  className="h-9 rounded-md border px-3 text-xs hover:bg-muted"
-                >
+                <button onClick={() => setSlotPickerOpen(false)} className="h-9 rounded-md border px-3 text-xs hover:bg-muted">
                   Close
                 </button>
               </div>
