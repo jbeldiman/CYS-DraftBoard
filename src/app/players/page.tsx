@@ -112,7 +112,7 @@ function PlayersPageInner() {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [sessionUser, setSessionUser] = useState<SessionUser>(null);
-  const [savingId, setSavingId] = useState<string | null>(null);
+  const [savingAll, setSavingAll] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const { index: historyIndex } = usePlayerHistoryIndex();
@@ -148,31 +148,27 @@ function PlayersPageInner() {
     loadPlayers();
   }, []);
 
- const filtered = useMemo(() => {
-  const s = q.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
 
-  const list = s
-    ? players.filter((p) =>
-        (p.fullName ?? "").toLowerCase().includes(s)
-      )
-    : players;
+    const list = s
+      ? players.filter((p) => (p.fullName ?? "").toLowerCase().includes(s))
+      : players;
 
-  return [...list].sort((a, b) => {
-    const ra = a.spring2026Rating;
-    const rb = b.spring2026Rating;
+    return [...list].sort((a, b) => {
+      const ra = a.spring2026Rating;
+      const rb = b.spring2026Rating;
 
+      if (ra == null && rb == null) {
+        return a.fullName.localeCompare(b.fullName);
+      }
+      if (ra == null) return 1;
+      if (rb == null) return -1;
+      if (rb !== ra) return rb - ra;
 
-    if (ra == null && rb == null) {
       return a.fullName.localeCompare(b.fullName);
-    }
-    if (ra == null) return 1;   
-    if (rb == null) return -1;  
-    if (rb !== ra) return rb - ra;
-
-   
-    return a.fullName.localeCompare(b.fullName);
-  });
-}, [players, q]);
+    });
+  }, [players, q]);
 
   function setField(id: string, patch: Partial<Player>) {
     setPlayers((prev) =>
@@ -180,27 +176,25 @@ function PlayersPageInner() {
     );
   }
 
-  async function saveRow(p: Player) {
+  async function saveAll() {
     if (!canSave) return;
-    setSavingId(p.id);
+    setSavingAll(true);
     try {
       await fetch("/api/draft/admin/players", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          players: [
-            {
-              id: p.id,
-              notes: p.notes ?? null,
-              experience: (p.experience ?? "").toString(),
-              spring2026Rating: p.spring2026Rating ?? null,
-            },
-          ],
+          players: players.map((p) => ({
+            id: p.id,
+            notes: p.notes ?? null,
+            experience: (p.experience ?? "").toString(),
+            spring2026Rating: p.spring2026Rating ?? null,
+          })),
         }),
       });
       await loadPlayers();
     } finally {
-      setSavingId(null);
+      setSavingAll(false);
     }
   }
 
@@ -239,7 +233,20 @@ function PlayersPageInner() {
           <div className="col-span-3">Player</div>
           <div className="col-span-2">Rating (Spring 2026)</div>
           <div className="col-span-6">Parent&apos;s Comment</div>
-          <div className="col-span-1 text-right">Save</div>
+          <div className="col-span-1 flex justify-end">
+            {canSave ? (
+              <button
+                type="button"
+                onClick={saveAll}
+                disabled={savingAll}
+                className="rounded-md border px-2 py-1 text-xs hover:bg-accent disabled:opacity-60"
+              >
+                {savingAll ? "Saving…" : "Save All"}
+              </button>
+            ) : (
+              <span />
+            )}
+          </div>
         </div>
 
         {loading ? (
@@ -315,17 +322,7 @@ function PlayersPageInner() {
                     </div>
 
                     <div className="col-span-1 flex justify-end">
-                      {canSave ? (
-                        <button
-                          onClick={() => saveRow(p)}
-                          disabled={savingId === p.id}
-                          className="rounded-md border px-2 py-1 text-xs hover:bg-accent disabled:opacity-60"
-                        >
-                          {savingId === p.id ? "Saving…" : "Save"}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground"></span>
-                      )}
+                      <span className="text-xs text-muted-foreground"></span>
                     </div>
                   </div>
 
