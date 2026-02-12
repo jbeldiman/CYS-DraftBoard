@@ -634,8 +634,8 @@ export default function DraftPage() {
       .sort((a, b) => (a.overallNumber ?? 0) - (b.overallNumber ?? 0));
   }, [myTeamId, picksForBoard, state?.recentPicks]);
 
-  const draftedCount = state?.counts?.drafted ?? picksForBoard.length ?? 0;
-  const undraftedCount = state?.counts?.undrafted ?? remaining.length ?? 0;
+  const draftedCount = state?.counts?.drafted ?? (picksForBoard?.length ?? 0);
+  const undraftedCount = state?.counts?.undrafted ?? (remaining?.length ?? 0);
   const totalPlayers = Math.max(0, draftedCount + undraftedCount);
   const rounds = teamCount > 0 ? Math.max(1, Math.ceil(totalPlayers / teamCount)) : 0;
 
@@ -649,6 +649,25 @@ export default function DraftPage() {
   }, [draftBoard]);
 
   const usedPlayerIds = useMemo(() => new Set(draftBoard.map((e) => e.playerId)), [draftBoard]);
+
+  const canDraftAny = isLive && isMyTurn && !draftBusy && teamCount > 0;
+
+  const slotPickerList = useMemo(() => {
+    const s = slotPickerQ.trim().toLowerCase();
+    const base = s ? remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s)) : remaining.slice();
+    return base
+      .filter((p) => !usedPlayerIds.has(p.id))
+      .sort((a, b) => {
+        const ra = a.rating;
+        const rb = b.rating;
+        if (ra == null && rb == null) return a.fullName.localeCompare(b.fullName);
+        if (ra == null) return 1;
+        if (rb == null) return -1;
+        if (rb !== ra) return rb - ra;
+        return a.fullName.localeCompare(b.fullName);
+      })
+      .slice(0, 200);
+  }, [remaining, slotPickerQ, usedPlayerIds]);
 
   function removeFromDraftBoard(playerId: string) {
     const next = draftBoard.filter((e) => e.playerId !== playerId);
@@ -688,7 +707,8 @@ export default function DraftPage() {
 
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        const msg = j?.error ?? (res.status === 404 ? "Missing endpoint: POST /api/draft/pick" : "Failed to draft player");
+        const msg =
+          j?.error ?? (res.status === 404 ? "Missing endpoint: POST /api/draft/pick" : "Failed to draft player");
         throw new Error(msg);
       }
 
@@ -733,25 +753,6 @@ export default function DraftPage() {
       </div>
     );
   }
-
-  const canDraftAny = isLive && isMyTurn && !draftBusy && teamCount > 0;
-
-  const slotPickerList = useMemo(() => {
-    const s = slotPickerQ.trim().toLowerCase();
-    const base = s ? remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s)) : remaining.slice();
-    return base
-      .filter((p) => !usedPlayerIds.has(p.id))
-      .sort((a, b) => {
-        const ra = a.rating;
-        const rb = b.rating;
-        if (ra == null && rb == null) return a.fullName.localeCompare(b.fullName);
-        if (ra == null) return 1;
-        if (rb == null) return -1;
-        if (rb !== ra) return rb - ra;
-        return a.fullName.localeCompare(b.fullName);
-      })
-      .slice(0, 200);
-  }, [remaining, slotPickerQ, usedPlayerIds]);
 
   return (
     <div className="py-3 sm:py-4 space-y-4">
@@ -806,7 +807,9 @@ export default function DraftPage() {
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">Current Pick</div>
                 <div className="text-lg font-semibold tabular-nums">#{event?.currentPick ?? 1}</div>
-                <div className="text-xs text-muted-foreground truncate">{onClockTeam?.name ?? (teamCount ? "—" : "No teams")}</div>
+                <div className="text-xs text-muted-foreground truncate">
+                  {onClockTeam?.name ?? (teamCount ? "—" : "No teams")}
+                </div>
               </div>
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
@@ -867,9 +870,7 @@ export default function DraftPage() {
                 <Pill tone="neutral">Use “Place” buttons</Pill>
               </div>
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Assign a player to any overall pick number (e.g. guarantee a player at pick 3).
-            </div>
+            <div className="mt-1 text-xs text-muted-foreground">Assign a player to any overall pick number.</div>
           </div>
         ) : null}
       </div>
@@ -959,14 +960,21 @@ export default function DraftPage() {
                     return (
                       <div
                         key={p.id}
-                        className={cx("grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition", isCompact && "py-3")}
+                        className={cx(
+                          "grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition",
+                          isCompact && "py-3"
+                        )}
                       >
                         <div className="col-span-7 sm:col-span-6 min-w-0">
                           <div className="font-semibold truncate">{p.fullName}</div>
                           {isCompact ? (
                             <div className="mt-1 text-xs text-muted-foreground flex items-center justify-between">
                               <Stars value={p.rating} />
-                              {onLocalBoard ? <span className="text-[11px]">On board</span> : <span className="text-[11px]">—</span>}
+                              {onLocalBoard ? (
+                                <span className="text-[11px]">On board</span>
+                              ) : (
+                                <span className="text-[11px]">—</span>
+                              )}
                             </div>
                           ) : null}
                         </div>
@@ -979,7 +987,9 @@ export default function DraftPage() {
                           <button
                             onClick={() => {
                               const emptySlot =
-                                rounds > 0 ? Array.from({ length: rounds }).findIndex((_, i) => !boardBySlot.has(i + 1)) + 1 : 0;
+                                rounds > 0
+                                  ? Array.from({ length: rounds }).findIndex((_, i) => !boardBySlot.has(i + 1)) + 1
+                                  : 0;
                               if (emptySlot > 0) setSlotPlayer(emptySlot, p.id);
                               else setDraftErr("Cannot add to board yet (teams not synced / rounds unknown).");
                             }}
@@ -1002,7 +1012,9 @@ export default function DraftPage() {
                               onClick={() => coachDraftPlayer(p.id)}
                               className={cx(
                                 "h-9 sm:h-8 rounded-md px-3 text-xs border",
-                                canDraft ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700" : "bg-muted text-muted-foreground"
+                                canDraft
+                                  ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
+                                  : "bg-muted text-muted-foreground"
                               )}
                               title={
                                 teamCount === 0
@@ -1050,7 +1062,9 @@ export default function DraftPage() {
             </div>
 
             {teamCount === 0 ? (
-              <div className="mt-4 text-sm text-muted-foreground">Teams haven’t synced yet — board slots will appear once they do.</div>
+              <div className="mt-4 text-sm text-muted-foreground">
+                Teams haven’t synced yet — board slots will appear once they do.
+              </div>
             ) : (
               <div className="mt-3 rounded-2xl border overflow-hidden">
                 <div className="grid grid-cols-12 bg-muted px-3 py-2 text-xs font-semibold">
@@ -1089,7 +1103,10 @@ export default function DraftPage() {
                         <div className="col-span-3 flex justify-end gap-2">
                           {player ? (
                             <>
-                              <button onClick={() => clearSlot(slot)} className="h-9 sm:h-8 rounded-md border px-3 sm:px-2 text-xs hover:bg-muted">
+                              <button
+                                onClick={() => clearSlot(slot)}
+                                className="h-9 sm:h-8 rounded-md border px-3 sm:px-2 text-xs hover:bg-muted"
+                              >
                                 ✕
                               </button>
 
@@ -1098,7 +1115,9 @@ export default function DraftPage() {
                                 onClick={() => coachDraftPlayer(player.id)}
                                 className={cx(
                                   "h-9 sm:h-8 rounded-md px-3 sm:px-2 text-xs border",
-                                  canDraft ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700" : "bg-muted text-muted-foreground"
+                                  canDraft
+                                    ? "bg-emerald-600 text-white border-emerald-700 hover:bg-emerald-700"
+                                    : "bg-muted text-muted-foreground"
                                 )}
                                 title={
                                   !isLive
@@ -1136,7 +1155,9 @@ export default function DraftPage() {
             )}
 
             {isAdmin ? (
-              <div className="mt-3 text-xs text-muted-foreground">Admin tip: use “Place” from the Eligible list to force any overall pick.</div>
+              <div className="mt-3 text-xs text-muted-foreground">
+                Admin tip: use “Place” from the Eligible list to force any overall pick.
+              </div>
             ) : null}
           </div>
         </div>
