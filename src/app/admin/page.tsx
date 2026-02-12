@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Coach = {
   id: string;
@@ -43,6 +43,24 @@ function isJosephBeldiman(c: Coach) {
   );
 }
 
+async function readApiError(res: Response) {
+  let json: any = null;
+  let text: string | null = null;
+
+  try {
+    json = await res.json();
+  } catch {
+    text = await res.text().catch(() => null);
+  }
+
+  const message =
+    json?.error ??
+    json?.message ??
+    (text && text.trim() ? text.trim() : `Request failed (${res.status})`);
+
+  return { json, text, message };
+}
+
 export default function AdminPage() {
   const [coaches, setCoaches] = useState<Coach[]>([]);
   const [name, setName] = useState("");
@@ -75,12 +93,20 @@ export default function AdminPage() {
   const [randomizeMsg, setRandomizeMsg] = useState<string | null>(null);
   const [randomizeErr, setRandomizeErr] = useState<string | null>(null);
 
+  const [customMsg, setCustomMsg] = useState<string | null>(null);
+  const [customErr, setCustomErr] = useState<string | null>(null);
+
   const [removingCoachId, setRemovingCoachId] = useState<string | null>(null);
   const [startingDraft, setStartingDraft] = useState(false);
 
+  const [draftOrderInput, setDraftOrderInput] = useState<Record<string, string>>({});
+
   async function loadCoaches() {
     const res = await fetch("/api/admin/coaches", { cache: "no-store" });
-    if (!res.ok) throw new Error("Failed to load coaches (are you logged in as ADMIN?)");
+    if (!res.ok) {
+      const { message } = await readApiError(res);
+      throw new Error(message || "Failed to load coaches (are you logged in as ADMIN?)");
+    }
     const json = await res.json().catch(() => ({}));
     setCoaches(json.users ?? []);
   }
@@ -105,6 +131,20 @@ export default function AdminPage() {
   useEffect(() => {
     bootstrap();
   }, []);
+
+  useEffect(() => {
+    if (!coaches.length) return;
+    setDraftOrderInput((prev) => {
+      const next: Record<string, string> = { ...prev };
+      for (let i = 0; i < coaches.length; i++) {
+        const c = coaches[i];
+        if (next[c.id] == null || next[c.id] === "") next[c.id] = String(i + 1);
+      }
+      const keep: Record<string, string> = {};
+      for (const c of coaches) keep[c.id] = next[c.id] ?? "";
+      return keep;
+    });
+  }, [coaches]);
 
   async function createCoach(e: React.FormEvent) {
     e.preventDefault();
@@ -336,24 +376,86 @@ export default function AdminPage() {
     try {
       await doSyncTeams({ silent: false });
     } catch {
-      // errors already surfaced
     }
   }
 
   async function saveCoachOrderToServer(orderedCoachIds: string[]) {
-    const res = await fetch("/api/admin/coaches/order", {
+    const payload = {
+      coachIds: orderedCoachIds,
+      orderedCoachIds: orderedCoachIds,
+      ids: orderedCoachIds,
+    };
+
+    const res = await fetch("/api/admin/order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ coachIds: orderedCoachIds }),
+      body: JSON.stringify(payload),
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error ?? "Failed to save coach order");
-    return json;
+
+    if (!res.ok) {
+      const { message } = await readApiError(res);
+      throw new Error(message ?? "Order failed to save");
+    }
+
+    return await res.json().catch(() => ({}));
+  }
+
+  function applyOrderInputsToList() {
+    const parsed = coaches.map((c) => {
+      const raw = draftOrderInput[c.id];
+      const n = Number(raw);
+      return { coach: c, n, raw };
+    });
+
+    for (const p of parsed) {
+      if (!Number.isFinite(p.n) || !Number.isInteger(p.n) || p.n <= 0) {
+        return { ok: false as const, error: "All draft order values must be positive whole numbers." };
+      }
+    }
+
+    const seen = new Set<number>();
+    for (const p of parsed) {
+      if (seen.has(p.n)) return { ok: false as const, error: "Draft order values must be unique (no duplicates)." };
+      seen.add(p.n);
+    }
+
+    const sorted = [...parsed].sort((a, b) => a.n - b.n).map((p) => p.coach);
+    return { ok: true as const, sorted };
+  }
+
+  async function saveCustomOrder() {
+    setCustomMsg(null);
+    setCustomErr(null);
+    setRandomizeMsg(null);
+    setRandomizeErr(null);
+
+    if (coaches.length < 2) {
+      setCustomErr("Need at least 2 coaches to set an order.");
+      return;
+    }
+
+    const result = applyOrderInputsToList();
+    if (!result.ok) {
+      setCustomErr(result.error);
+      return;
+    }
+
+    try {
+      const sorted = result.sorted;
+      setCoaches(sorted);
+      await saveCoachOrderToServer(sorted.map((c) => c.id));
+      await syncTeamsToDraft();
+      setCustomMsg("Custom order saved.");
+    } catch (e: any) {
+      setCustomErr(e?.message ?? "Failed to save custom order");
+    }
   }
 
   async function randomizeOrder(e: React.MouseEvent<HTMLButtonElement>) {
     setRandomizeMsg(null);
     setRandomizeErr(null);
+    setCustomMsg(null);
+    setCustomErr(null);
 
     if (coaches.length < 2) {
       setRandomizeErr("Need at least 2 coaches to randomize.");
@@ -390,6 +492,12 @@ export default function AdminPage() {
 
       setCoaches(shuffled);
 
+      setDraftOrderInput(() => {
+        const next: Record<string, string> = {};
+        for (let i = 0; i < shuffled.length; i++) next[shuffled[i].id] = String(i + 1);
+        return next;
+      });
+
       await saveCoachOrderToServer(shuffled.map((c) => c.id));
       await syncTeamsToDraft();
       setRandomizeMsg((m) => (m ? `${m} Saved.` : "Randomized order. Saved."));
@@ -402,6 +510,12 @@ export default function AdminPage() {
   const isLive = phase === "LIVE";
   const isPaused = !!draftStatus?.isPaused;
   const uploadLocked = isLive;
+
+  const coachIdToIndex = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (let i = 0; i < coaches.length; i++) m[coaches[i].id] = i;
+    return m;
+  }, [coaches]);
 
   return (
     <main style={{ padding: 24, maxWidth: 980 }}>
@@ -773,7 +887,7 @@ export default function AdminPage() {
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Coaches</h2>
           <div style={{ opacity: 0.8, fontSize: 13, marginTop: 4 }}>
-            Draft order is shown below. Randomize Order saves instantly.
+            Draft order is shown below. Randomize saves instantly. You can also set a custom order.
           </div>
         </div>
 
@@ -795,6 +909,34 @@ export default function AdminPage() {
 
           {randomizeMsg ? <div style={{ color: "green", fontWeight: 800 }}>{randomizeMsg}</div> : null}
           {randomizeErr ? <div style={{ color: "crimson", fontWeight: 800 }}>{randomizeErr}</div> : null}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, padding: 12, border: "1px solid #ddd", borderRadius: 10, maxWidth: 820 }}>
+        <div style={{ fontWeight: 900, marginBottom: 8 }}>Custom Draft Order</div>
+        <div style={{ opacity: 0.8, fontSize: 13, lineHeight: 1.4, marginBottom: 10 }}>
+          Set a unique draft order number for each coach, then click “Save Custom Order”.
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            type="button"
+            onClick={saveCustomOrder}
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #222",
+              background: "#0a7",
+              color: "white",
+              fontWeight: 900,
+              cursor: "pointer",
+            }}
+          >
+            Save Custom Order
+          </button>
+
+          {customMsg ? <div style={{ color: "green", fontWeight: 800 }}>{customMsg}</div> : null}
+          {customErr ? <div style={{ color: "crimson", fontWeight: 800 }}>{customErr}</div> : null}
         </div>
       </div>
 
@@ -823,6 +965,24 @@ export default function AdminPage() {
                 }}
               >
                 Draft Order {idx + 1}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ fontWeight: 800 }}>Set:</div>
+                <input
+                  type="number"
+                  value={draftOrderInput[c.id] ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setDraftOrderInput((prev) => ({ ...prev, [c.id]: v }));
+                  }}
+                  style={{
+                    width: 90,
+                    padding: "8px 10px",
+                    border: "1px solid #ccc",
+                    borderRadius: 8,
+                  }}
+                />
               </div>
 
               <div style={{ minWidth: 0 }}>
