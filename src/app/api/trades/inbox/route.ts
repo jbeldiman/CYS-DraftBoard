@@ -6,8 +6,15 @@ import { authOptions } from "@/lib/authOptions";
 export const runtime = "nodejs";
 
 async function latestEventId() {
+  const live = await prisma.draftEvent.findFirst({
+    where: { phase: "LIVE" },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true },
+  });
+  if (live?.id) return live.id;
+
   const e = await prisma.draftEvent.findFirst({
-    orderBy: { createdAt: "desc" },
+    orderBy: { updatedAt: "desc" },
     select: { id: true },
   });
   return e?.id ?? null;
