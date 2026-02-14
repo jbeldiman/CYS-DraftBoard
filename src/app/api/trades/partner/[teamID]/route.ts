@@ -28,10 +28,7 @@ async function rosterWithRounds(draftEventId: string, teamId: string) {
   }));
 }
 
-export async function GET(
-  req: NextRequest,
-  ctx: { params?: { teamID?: string; teamId?: string; id?: string } }
-) {
+export async function GET(req: NextRequest, context: any) {
   try {
     const session = await getServerSession(authOptions);
     const userId = (session?.user as any)?.id as string | undefined;
@@ -42,14 +39,14 @@ export async function GET(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const teamId = ctx?.params?.teamID ?? ctx?.params?.teamId ?? ctx?.params?.id;
+    const teamId: string | undefined =
+      (context?.params?.teamID as string | undefined) ??
+      (context?.params?.teamId as string | undefined) ??
+      (context?.params?.id as string | undefined);
 
     if (!teamId) {
       return NextResponse.json(
-        {
-          error: "Missing team id",
-          debug: { params: ctx?.params ?? null },
-        },
+        { error: "Missing team id", debug: { params: context?.params ?? null } },
         { status: 400 }
       );
     }
