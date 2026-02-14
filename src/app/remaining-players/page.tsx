@@ -19,6 +19,7 @@ type Player = {
   notes: string | null;
   experience: string | null;
   spring2026Rating: number | null;
+  isGoalie?: boolean;
 };
 
 type SessionUser = { id?: string; role?: Role } | null;
@@ -78,6 +79,14 @@ function extractSpring2026Rating(p: any): number | null {
   return t;
 }
 
+function extractGoalieFlag(p: any): boolean {
+  if (typeof p?.isGoalie === "boolean") return p.isGoalie;
+  if (typeof p?.goalie === "boolean") return p.goalie;
+  if (typeof p?.isGK === "boolean") return p.isGK;
+  if (typeof p?.gk === "boolean") return p.gk;
+  return false;
+}
+
 function stableHash(players: any[]) {
   try {
     return JSON.stringify(
@@ -87,6 +96,7 @@ function stableHash(players: any[]) {
         experience: p.experience ?? null,
         spring2026Rating: p.spring2026Rating ?? null,
         notes: p.notes ?? null,
+        isGoalie: !!p.isGoalie,
       }))
     );
   } catch {
@@ -142,6 +152,7 @@ function RemainingPlayersInner() {
         notes: (p.notes ?? null) as string | null,
         experience: (p.experience ?? null) as string | null,
         spring2026Rating: extractSpring2026Rating(p),
+        isGoalie: extractGoalieFlag(p),
       }));
 
       const nextHash = stableHash(nextPlayers);
@@ -171,9 +182,7 @@ function RemainingPlayersInner() {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return players;
-    return players.filter((p) =>
-      (p.fullName ?? "").toLowerCase().includes(s)
-    );
+    return players.filter((p) => (p.fullName ?? "").toLowerCase().includes(s));
   }, [players, q]);
 
   function setField(id: string, patch: Partial<Player>) {
@@ -197,6 +206,7 @@ function RemainingPlayersInner() {
               notes: p.notes ?? null,
               experience: (p.experience ?? "").toString(),
               spring2026Rating: p.spring2026Rating ?? null,
+              isGoalie: !!p.isGoalie,
             },
           ],
         }),
@@ -251,7 +261,8 @@ function RemainingPlayersInner() {
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
           <div className="col-span-3">Player</div>
           <div className="col-span-2">Rating (Spring 2026)</div>
-          <div className="col-span-6">Parent&apos;s Comment</div>
+          <div className="col-span-1">{canSave ? "Goalie" : ""}</div>
+          <div className="col-span-5">Parent&apos;s Comment</div>
           <div className="col-span-1 text-right">Save</div>
         </div>
 
@@ -282,7 +293,12 @@ function RemainingPlayersInner() {
 
               return (
                 <div key={p.id}>
-                  <div className="grid grid-cols-12 gap-0 px-3 py-3 text-sm items-center">
+                  <div
+                    className={cx(
+                      "grid grid-cols-12 gap-0 px-3 py-3 text-sm items-center",
+                      p.isGoalie ? "bg-sky-50" : undefined
+                    )}
+                  >
                     <div className="col-span-3">
                       <button
                         type="button"
@@ -320,7 +336,26 @@ function RemainingPlayersInner() {
                       </div>
                     </div>
 
-                    <div className="col-span-6">
+                    <div className="col-span-1">
+                      {canSave ? (
+                        <label className="inline-flex items-center gap-2 text-xs select-none">
+                          <input
+                            type="checkbox"
+                            checked={!!p.isGoalie}
+                            onChange={(e) =>
+                              setField(p.id, { isGoalie: e.target.checked })
+                            }
+                            className="h-4 w-4"
+                            aria-label="Goalie"
+                          />
+                          <span className="text-muted-foreground">GK</span>
+                        </label>
+                      ) : (
+                        <span className="text-xs text-muted-foreground"></span>
+                      )}
+                    </div>
+
+                    <div className="col-span-5">
                       <div className="text-muted-foreground whitespace-pre-wrap break-words">
                         {parentComment}
                       </div>

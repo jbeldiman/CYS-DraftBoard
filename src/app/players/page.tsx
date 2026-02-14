@@ -21,6 +21,8 @@ type Player = {
 
   spring2026Rating: number | null;
 
+  isGoalie?: boolean;
+
   isDrafted: boolean;
   draftedTeam: { name: string; order: number } | null;
 
@@ -78,6 +80,14 @@ function extractSpring2026Rating(p: any): number | null {
   return t;
 }
 
+function extractGoalieFlag(p: any): boolean {
+  if (typeof p?.isGoalie === "boolean") return p.isGoalie;
+  if (typeof p?.goalie === "boolean") return p.goalie;
+  if (typeof p?.isGK === "boolean") return p.isGK;
+  if (typeof p?.gk === "boolean") return p.gk;
+  return false;
+}
+
 function normalizePlayers(rows: any[]): Player[] {
   return (rows ?? []).map((p: any) => {
     const spring = extractSpring2026Rating(p);
@@ -89,11 +99,11 @@ function normalizePlayers(rows: any[]): Player[] {
 
       spring2026Rating: spring,
 
+      isGoalie: extractGoalieFlag(p),
+
       isDrafted: !!(p?.isDrafted ?? p?.drafted ?? p?.draftedAt),
       draftedTeam: (p?.draftedTeam ??
-        (p?.team
-          ? { name: p.team?.name, order: p.team?.order }
-          : null) ??
+        (p?.team ? { name: p.team?.name, order: p.team?.order } : null) ??
         null) as any,
       draftedAt: p?.draftedAt ?? null,
       drafted: typeof p?.drafted === "boolean" ? p.drafted : undefined,
@@ -189,6 +199,7 @@ function PlayersPageInner() {
             notes: p.notes ?? null,
             experience: (p.experience ?? "").toString(),
             spring2026Rating: p.spring2026Rating ?? null,
+            isGoalie: !!p.isGoalie,
           })),
         }),
       });
@@ -232,7 +243,8 @@ function PlayersPageInner() {
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
           <div className="col-span-3">Player</div>
           <div className="col-span-2">Rating (Spring 2026)</div>
-          <div className="col-span-6">Parent&apos;s Comment</div>
+          <div className="col-span-1">{canSave ? "Goalie" : ""}</div>
+          <div className="col-span-5">Parent&apos;s Comment</div>
           <div className="col-span-1 flex justify-end">
             {canSave ? (
               <button
@@ -276,7 +288,12 @@ function PlayersPageInner() {
 
               return (
                 <div key={p.id}>
-                  <div className="grid grid-cols-12 gap-0 px-3 py-3 text-sm items-center">
+                  <div
+                    className={cx(
+                      "grid grid-cols-12 gap-0 px-3 py-3 text-sm items-center",
+                      p.isGoalie ? "bg-sky-50" : undefined
+                    )}
+                  >
                     <div className="col-span-3">
                       <button
                         type="button"
@@ -315,7 +332,26 @@ function PlayersPageInner() {
                       </div>
                     </div>
 
-                    <div className="col-span-6">
+                    <div className="col-span-1">
+                      {canSave ? (
+                        <label className="inline-flex items-center gap-2 text-xs select-none">
+                          <input
+                            type="checkbox"
+                            checked={!!p.isGoalie}
+                            onChange={(e) =>
+                              setField(p.id, { isGoalie: e.target.checked })
+                            }
+                            className="h-4 w-4"
+                            aria-label="Goalie"
+                          />
+                          <span className="text-muted-foreground">GK</span>
+                        </label>
+                      ) : (
+                        <span className="text-xs text-muted-foreground"></span>
+                      )}
+                    </div>
+
+                    <div className="col-span-5">
                       <div className="text-muted-foreground whitespace-pre-wrap break-words">
                         {parentComment}
                       </div>
