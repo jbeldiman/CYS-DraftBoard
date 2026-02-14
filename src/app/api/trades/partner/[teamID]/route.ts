@@ -39,14 +39,13 @@ export async function GET(req: NextRequest, context: any) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const teamId: string | undefined =
-      (context?.params?.teamID as string | undefined) ??
-      (context?.params?.teamId as string | undefined) ??
-      (context?.params?.id as string | undefined);
+
+    const params = (await context?.params) ?? context?.params ?? {};
+    const teamId: string | undefined = params.teamID ?? params.teamId ?? params.id;
 
     if (!teamId) {
       return NextResponse.json(
-        { error: "Missing team id", debug: { params: context?.params ?? null } },
+        { error: "Missing team id", debug: { params } },
         { status: 400 }
       );
     }
