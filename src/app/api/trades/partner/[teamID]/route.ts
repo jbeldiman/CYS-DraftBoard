@@ -12,6 +12,10 @@ async function rosterWithRounds(draftEventId: string, teamId: string) {
     select: { id: true, fullName: true, firstName: true, lastName: true },
   });
 
+  if (!players.length) {
+    return [];
+  }
+
   const picks = await prisma.draftPick.findMany({
     where: { draftEventId, playerId: { in: players.map((p) => p.id) } },
     select: { playerId: true, round: true },
@@ -27,30 +31,33 @@ async function rosterWithRounds(draftEventId: string, teamId: string) {
 }
 
 export async function GET(req: NextRequest, context: any) {
-  const teamId = context.params.teamID;
+  try {
+    const teamId = context.params.teamID as string | undefined;
 
-  const session = await getServerSession(authOptions);
-  const userId = (session?.user as any)?.id as string | undefined;
-  const role = (session?.user as any)?.role as string | undefined;
+    const session = await getServerSession(authOptions);
+    const userId = (session?.user as any)?.id as string | undefined;
+    const role = (session?.user as any)?.role as string | undefined;
 
-  if (!userId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!["COACH", "ADMIN", "BOARD"].includes(role ?? "")) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if (!teamId) return NextResponse.json({ error: "Missing team id" }, { status: 400 });
+
+    const team = await prisma.draftTeam.findUnique({
+      where: { id: teamId },
+      select: { id: true, draftEventId: true },
+    });
+
+    if (!team) return NextResponse.json({ error: "Team not found" }, { status: 404 });
+
+    const players = await rosterWithRounds(team.draftEventId, team.id);
+    return NextResponse.json({ players });
+  } catch (err: any) {
+    console.error("Partner roster error:", err);
+    return NextResponse.json(
+      { error: err?.message ?? "Failed to load partner roster" },
+      { status: 500 }
+    );
   }
-
-  const allowed = role === "COACH" || role === "ADMIN" || role === "BOARD";
-  if (!allowed) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  const team = await prisma.draftTeam.findUnique({
-    where: { id: teamId },
-    select: { id: true, draftEventId: true },
-  });
-
-  if (!team) {
-    return NextResponse.json({ error: "Team not found" }, { status: 404 });
-  }
-
-  const players = await rosterWithRounds(team.draftEventId, team.id);
-  return NextResponse.json({ players });
 }

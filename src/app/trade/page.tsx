@@ -83,16 +83,26 @@ export default function TradeHubPage() {
   }
 
   async function loadPartner(teamId: string) {
-    setPartnerRoster([]);
-    setGiveIds([]);
-    setReceiveIds([]);
-    if (!teamId) return;
+  setPartnerRoster([]);
+  setGiveIds([]);
+  setReceiveIds([]);
+  if (!teamId) return;
 
-    const r = await fetch(`/api/trades/partner/${teamId}`, { cache: "no-store" });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j?.error ?? "Failed to load partner roster");
-    setPartnerRoster(j.players ?? []);
+  const r = await fetch(`/api/trades/partner/${teamId}`, { cache: "no-store" });
+
+  const text = await r.text();
+  let j: any = {};
+  try {
+    j = text ? JSON.parse(text) : {};
+  } catch {
   }
+
+  if (!r.ok) {
+    throw new Error(j?.error ?? `Failed to load partner roster (HTTP ${r.status})`);
+  }
+
+  setPartnerRoster(j.players ?? []);
+}
 
   async function loadInbox(showToast: boolean) {
     const r = await fetch("/api/trades/inbox", { cache: "no-store" });
