@@ -80,7 +80,6 @@ export async function GET(req: Request) {
         experience: true,
         rank: true,
 
-
         spring2025Rating: true,
         fall2025Rating: true,
         spring2026Rating: true,
@@ -91,6 +90,8 @@ export async function GET(req: Request) {
         draftedAt: true,
         draftedTeamId: true,
         draftedTeam: { select: { id: true, name: true, order: true } },
+
+        isGoalie: true,
       },
     });
 
@@ -101,6 +102,7 @@ export async function GET(req: Request) {
         ...p,
         spring2026Rating,
         rating: spring2026Rating,
+        isGoalie: !!p.isGoalie,
       };
     });
 

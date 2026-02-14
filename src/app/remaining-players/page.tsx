@@ -232,9 +232,19 @@ function RemainingPlayersInner() {
   return (
     <div className="py-8">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Remaining Players
-        </h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Remaining Players
+          </h1>
+
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded-sm bg-sky-200 ring-1 ring-sky-300" />
+              Goalie
+            </span>
+          </div>
+        </div>
+
         <div className="text-sm text-muted-foreground">
           Auto-updates during the live draft.
         </div>
@@ -261,7 +271,7 @@ function RemainingPlayersInner() {
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
           <div className="col-span-3">Player</div>
           <div className="col-span-2">Rating (Spring 2026)</div>
-          <div className="col-span-1">{canSave ? "Goalie" : ""}</div>
+          <div className="col-span-1">GK</div>
           <div className="col-span-5">Parent&apos;s Comment</div>
           <div className="col-span-1 text-right">Save</div>
         </div>
@@ -337,8 +347,16 @@ function RemainingPlayersInner() {
                     </div>
 
                     <div className="col-span-1">
-                      {canSave ? (
-                        <label className="inline-flex items-center gap-2 text-xs select-none">
+                      <div className="flex items-center gap-2">
+                        {p.isGoalie ? (
+                          <span className="inline-flex items-center rounded-md bg-sky-200 px-2 py-0.5 text-xs font-semibold text-sky-900">
+                            GK
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+
+                        {canSave ? (
                           <input
                             type="checkbox"
                             checked={!!p.isGoalie}
@@ -346,13 +364,10 @@ function RemainingPlayersInner() {
                               setField(p.id, { isGoalie: e.target.checked })
                             }
                             className="h-4 w-4"
-                            aria-label="Goalie"
+                            aria-label="Toggle goalie"
                           />
-                          <span className="text-muted-foreground">GK</span>
-                        </label>
-                      ) : (
-                        <span className="text-xs text-muted-foreground"></span>
-                      )}
+                        ) : null}
+                      </div>
                     </div>
 
                     <div className="col-span-5">

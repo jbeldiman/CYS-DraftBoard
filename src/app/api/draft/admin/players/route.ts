@@ -42,6 +42,20 @@ function clampRating(v: any): number | null {
   return t;
 }
 
+function clampBool(v: any): boolean | undefined {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    if (s === "true" || s === "1" || s === "yes") return true;
+    if (s === "false" || s === "0" || s === "no") return false;
+  }
+  if (typeof v === "number") {
+    if (v === 1) return true;
+    if (v === 0) return false;
+  }
+  return undefined;
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -65,6 +79,7 @@ export async function GET(req: Request) {
         spring2026Rating: true,
         isDraftEligible: true,
         isDrafted: true,
+        isGoalie: true,
       },
     });
 
@@ -74,9 +89,10 @@ export async function GET(req: Request) {
       jerseySize: p.jerseySize,
       rank: p.rank,
       spring2026Rating: p.spring2026Rating ?? null,
-      rating: p.spring2026Rating ?? null, 
+      rating: p.spring2026Rating ?? null,
       isDraftEligible: p.isDraftEligible,
       isDrafted: p.isDrafted,
+      isGoalie: !!p.isGoalie,
     }));
 
     return NextResponse.json({ draftEventId, players: out });
@@ -98,18 +114,21 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const players = Array.isArray(body?.players) ? body.players : [];
     if (!players.length) {
-      return NextResponse.json({ error: "No players provided" }, { status: 400 });
+      return NextResponse.json(
+        { error: "No players provided" },
+        { status: 400 }
+      );
     }
 
     const draftEventId = await currentEvent();
 
-    
     await prisma.$transaction(
       players.map((p: any) => {
         const id = String(p?.id ?? "");
         if (!id) throw new Error("Missing player id");
 
         const spring2026Rating = clampRating(p?.spring2026Rating);
+        const isGoalie = clampBool(p?.isGoalie);
 
         return prisma.draftPlayer.updateMany({
           where: { id, draftEventId },
@@ -117,6 +136,7 @@ export async function POST(req: Request) {
             spring2026Rating,
             notes: p?.notes ?? null,
             experience: p?.experience ?? null,
+            ...(typeof isGoalie === "boolean" ? { isGoalie } : {}),
           },
         });
       })

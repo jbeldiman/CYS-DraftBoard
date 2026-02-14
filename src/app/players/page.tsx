@@ -98,7 +98,6 @@ function normalizePlayers(rows: any[]): Player[] {
       experience: (p.experience ?? null) as string | null,
 
       spring2026Rating: spring,
-
       isGoalie: extractGoalieFlag(p),
 
       isDrafted: !!(p?.isDrafted ?? p?.drafted ?? p?.draftedAt),
@@ -169,9 +168,7 @@ function PlayersPageInner() {
       const ra = a.spring2026Rating;
       const rb = b.spring2026Rating;
 
-      if (ra == null && rb == null) {
-        return a.fullName.localeCompare(b.fullName);
-      }
+      if (ra == null && rb == null) return a.fullName.localeCompare(b.fullName);
       if (ra == null) return 1;
       if (rb == null) return -1;
       if (rb !== ra) return rb - ra;
@@ -216,9 +213,19 @@ function PlayersPageInner() {
   return (
     <div className="py-8">
       <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-semibold tracking-tight">
-          Full Eligible Players
-        </h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Full Eligible Players
+          </h1>
+
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className="inline-flex items-center gap-2">
+              <span className="h-3 w-3 rounded-sm bg-sky-200 ring-1 ring-sky-300" />
+              Goalie
+            </span>
+          </div>
+        </div>
+
         <div className="text-sm text-muted-foreground">
           Players born 12/01/2012 – 12/31/2016 with U13 selected.
         </div>
@@ -243,7 +250,7 @@ function PlayersPageInner() {
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
           <div className="col-span-3">Player</div>
           <div className="col-span-2">Rating (Spring 2026)</div>
-          <div className="col-span-1">{canSave ? "Goalie" : ""}</div>
+          <div className="col-span-1">GK</div>
           <div className="col-span-5">Parent&apos;s Comment</div>
           <div className="col-span-1 flex justify-end">
             {canSave ? (
@@ -333,8 +340,16 @@ function PlayersPageInner() {
                     </div>
 
                     <div className="col-span-1">
-                      {canSave ? (
-                        <label className="inline-flex items-center gap-2 text-xs select-none">
+                      <div className="flex items-center gap-2">
+                        {p.isGoalie ? (
+                          <span className="inline-flex items-center rounded-md bg-sky-200 px-2 py-0.5 text-xs font-semibold text-sky-900">
+                            GK
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+
+                        {canSave ? (
                           <input
                             type="checkbox"
                             checked={!!p.isGoalie}
@@ -342,13 +357,10 @@ function PlayersPageInner() {
                               setField(p.id, { isGoalie: e.target.checked })
                             }
                             className="h-4 w-4"
-                            aria-label="Goalie"
+                            aria-label="Toggle goalie"
                           />
-                          <span className="text-muted-foreground">GK</span>
-                        </label>
-                      ) : (
-                        <span className="text-xs text-muted-foreground"></span>
-                      )}
+                        ) : null}
+                      </div>
                     </div>
 
                     <div className="col-span-5">

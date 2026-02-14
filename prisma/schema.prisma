@@ -252,6 +252,7 @@ model DraftPlayer {
 
   isDraftEligible Boolean @default(false)
   isDrafted       Boolean @default(false)
+  isGoalie        Boolean @default(false)
 
   draftedTeamId String?
   draftedTeam   DraftTeam? @relation("TeamDraftedPlayers", fields: [draftedTeamId], references: [id], onDelete: SetNull)
