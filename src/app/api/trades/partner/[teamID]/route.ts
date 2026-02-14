@@ -12,9 +12,7 @@ async function rosterWithRounds(draftEventId: string, teamId: string) {
     select: { id: true, fullName: true, firstName: true, lastName: true },
   });
 
-  if (!players.length) {
-    return [];
-  }
+  if (!players.length) return [];
 
   const picks = await prisma.draftPick.findMany({
     where: { draftEventId, playerId: { in: players.map((p) => p.id) } },
@@ -30,10 +28,11 @@ async function rosterWithRounds(draftEventId: string, teamId: string) {
   }));
 }
 
-export async function GET(req: NextRequest, context: any) {
+export async function GET(
+  req: NextRequest,
+  ctx: { params?: { teamID?: string; teamId?: string; id?: string } }
+) {
   try {
-    const teamId = context.params.teamID as string | undefined;
-
     const session = await getServerSession(authOptions);
     const userId = (session?.user as any)?.id as string | undefined;
     const role = (session?.user as any)?.role as string | undefined;
@@ -42,7 +41,18 @@ export async function GET(req: NextRequest, context: any) {
     if (!["COACH", "ADMIN", "BOARD"].includes(role ?? "")) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
-    if (!teamId) return NextResponse.json({ error: "Missing team id" }, { status: 400 });
+
+    const teamId = ctx?.params?.teamID ?? ctx?.params?.teamId ?? ctx?.params?.id;
+
+    if (!teamId) {
+      return NextResponse.json(
+        {
+          error: "Missing team id",
+          debug: { params: ctx?.params ?? null },
+        },
+        { status: 400 }
+      );
+    }
 
     const team = await prisma.draftTeam.findUnique({
       where: { id: teamId },
