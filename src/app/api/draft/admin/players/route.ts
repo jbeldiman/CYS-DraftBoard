@@ -5,8 +5,16 @@ import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
 
-function isAdmin(session: any) {
-  return session?.user && (session.user as any).role === "ADMIN";
+type Role = "ADMIN" | "BOARD" | "COACH" | "PARENT";
+
+function getRole(session: any): Role | null {
+  const r = (session?.user as any)?.role;
+  return typeof r === "string" ? (r as Role) : null;
+}
+
+function isAdminOrBoard(session: any) {
+  const r = getRole(session);
+  return r === "ADMIN" || r === "BOARD";
 }
 
 async function currentEvent() {
@@ -80,6 +88,8 @@ export async function GET(req: Request) {
         isDraftEligible: true,
         isDrafted: true,
         isGoalie: true,
+        evalAttended: true,
+        evalNumber: true,
       },
     });
 
@@ -93,6 +103,8 @@ export async function GET(req: Request) {
       isDraftEligible: p.isDraftEligible,
       isDrafted: p.isDrafted,
       isGoalie: !!p.isGoalie,
+      evalAttended: !!p.evalAttended,
+      evalNumber: p.evalNumber ?? null,
     }));
 
     return NextResponse.json({ draftEventId, players: out });
@@ -107,9 +119,12 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
-    if (!isAdmin(session)) {
+    if (!isAdminOrBoard(session)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const role = getRole(session);
+    const isAdmin = role === "ADMIN";
 
     const body = await req.json().catch(() => ({}));
     const players = Array.isArray(body?.players) ? body.players : [];
@@ -127,6 +142,19 @@ export async function POST(req: Request) {
         const id = String(p?.id ?? "");
         if (!id) throw new Error("Missing player id");
 
+        const evalAttended = clampBool(p?.evalAttended);
+
+        if (!isAdmin) {
+          
+          return prisma.draftPlayer.updateMany({
+            where: { id, draftEventId },
+            data: {
+              ...(typeof evalAttended === "boolean" ? { evalAttended } : {}),
+            },
+          });
+        }
+
+        
         const spring2026Rating = clampRating(p?.spring2026Rating);
         const isGoalie = clampBool(p?.isGoalie);
 
@@ -137,6 +165,7 @@ export async function POST(req: Request) {
             notes: p?.notes ?? null,
             experience: p?.experience ?? null,
             ...(typeof isGoalie === "boolean" ? { isGoalie } : {}),
+            ...(typeof evalAttended === "boolean" ? { evalAttended } : {}),
           },
         });
       })

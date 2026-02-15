@@ -249,10 +249,12 @@ model DraftPlayer {
   spring2026Rating Int?
   notes            String?
   rank             Int?
+  evalNumber       Int?
 
   isDraftEligible Boolean @default(false)
   isDrafted       Boolean @default(false)
   isGoalie        Boolean @default(false)
+  evalAttended    Boolean @default(false)
 
   draftedTeamId String?
   draftedTeam   DraftTeam? @relation("TeamDraftedPlayers", fields: [draftedTeamId], references: [id], onDelete: SetNull)
@@ -267,6 +269,7 @@ model DraftPlayer {
 
   @@index([draftEventId, isDraftEligible, isDrafted])
   @@index([draftEventId, lastName, firstName])
+  @@unique([draftEventId, evalNumber])
 }
 
 model DraftPick {

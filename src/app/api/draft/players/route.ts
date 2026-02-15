@@ -92,17 +92,20 @@ export async function GET(req: Request) {
         draftedTeam: { select: { id: true, name: true, order: true } },
 
         isGoalie: true,
+        evalAttended: true,
+        evalNumber: true,
       },
     });
 
     const players = rows.map((p) => {
       const spring2026Rating = toRating(p.spring2026Rating);
-
       return {
         ...p,
         spring2026Rating,
         rating: spring2026Rating,
         isGoalie: !!p.isGoalie,
+        evalAttended: !!p.evalAttended,
+        evalNumber: p.evalNumber ?? null,
       };
     });
 

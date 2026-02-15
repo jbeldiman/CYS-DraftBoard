@@ -23,6 +23,9 @@ type Player = {
 
   isGoalie?: boolean;
 
+  evalAttended?: boolean;
+  evalNumber?: number | null;
+
   isDrafted: boolean;
   draftedTeam: { name: string; order: number } | null;
 
@@ -88,6 +91,20 @@ function extractGoalieFlag(p: any): boolean {
   return false;
 }
 
+function extractEvalAttended(p: any): boolean {
+  if (typeof p?.evalAttended === "boolean") return p.evalAttended;
+  if (typeof p?.wasAtEvals === "boolean") return p.wasAtEvals;
+  if (typeof p?.atEvals === "boolean") return p.atEvals;
+  return false;
+}
+
+function extractEvalNumber(p: any): number | null {
+  const n = toNumberOrNull(p?.evalNumber);
+  if (n == null) return null;
+  const t = Math.trunc(n);
+  return t >= 1 ? t : null;
+}
+
 function normalizePlayers(rows: any[]): Player[] {
   return (rows ?? []).map((p: any) => {
     const spring = extractSpring2026Rating(p);
@@ -98,7 +115,11 @@ function normalizePlayers(rows: any[]): Player[] {
       experience: (p.experience ?? null) as string | null,
 
       spring2026Rating: spring,
+
       isGoalie: extractGoalieFlag(p),
+
+      evalAttended: extractEvalAttended(p),
+      evalNumber: extractEvalNumber(p),
 
       isDrafted: !!(p?.isDrafted ?? p?.drafted ?? p?.draftedAt),
       draftedTeam: (p?.draftedTeam ??
@@ -122,11 +143,15 @@ function PlayersPageInner() {
   const [loading, setLoading] = useState(true);
   const [sessionUser, setSessionUser] = useState<SessionUser>(null);
   const [savingAll, setSavingAll] = useState(false);
+  const [seeding, setSeeding] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
 
   const { index: historyIndex } = usePlayerHistoryIndex();
 
-  const canSave = sessionUser?.role === "ADMIN";
+  const role = sessionUser?.role;
+  const canSaveAllAdmin = role === "ADMIN";
+  const canToggleEvals = role === "ADMIN" || role === "BOARD";
 
   async function loadSession() {
     try {
@@ -140,6 +165,7 @@ function PlayersPageInner() {
 
   async function loadPlayers() {
     setLoading(true);
+    setErr(null);
     try {
       const res = await fetch("/api/draft/players?eligible=true", {
         cache: "no-store",
@@ -147,6 +173,9 @@ function PlayersPageInner() {
       const json = await res.json().catch(() => ({}));
       const rows = Array.isArray(json?.players) ? json.players : [];
       setPlayers(normalizePlayers(rows));
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to load players");
+      setPlayers([]);
     } finally {
       setLoading(false);
     }
@@ -163,6 +192,7 @@ function PlayersPageInner() {
     const list = s
       ? players.filter((p) => (p.fullName ?? "").toLowerCase().includes(s))
       : players;
+
 
     return [...list].sort((a, b) => {
       const ra = a.spring2026Rating;
@@ -183,9 +213,30 @@ function PlayersPageInner() {
     );
   }
 
+  async function seedNumbers() {
+    if (!canToggleEvals) return;
+    setSeeding(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/draft/admin/evals/seed-numbers", {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error ?? "Failed to assign numbers");
+      }
+      await loadPlayers();
+    } catch (e: any) {
+      setErr(e?.message ?? "Failed to assign numbers");
+    } finally {
+      setSeeding(false);
+    }
+  }
+
   async function saveAll() {
-    if (!canSave) return;
+    if (!canSaveAllAdmin && !canToggleEvals) return;
     setSavingAll(true);
+    setErr(null);
     try {
       await fetch("/api/draft/admin/players", {
         method: "POST",
@@ -193,6 +244,10 @@ function PlayersPageInner() {
         body: JSON.stringify({
           players: players.map((p) => ({
             id: p.id,
+
+
+            evalAttended: !!p.evalAttended,
+
             notes: p.notes ?? null,
             experience: (p.experience ?? "").toString(),
             spring2026Rating: p.spring2026Rating ?? null,
@@ -201,6 +256,8 @@ function PlayersPageInner() {
         }),
       });
       await loadPlayers();
+    } catch (e: any) {
+      setErr(e?.message ?? "Save failed");
     } finally {
       setSavingAll(false);
     }
@@ -218,10 +275,14 @@ function PlayersPageInner() {
             Full Eligible Players
           </h1>
 
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <span className="inline-flex items-center gap-2">
               <span className="h-3 w-3 rounded-sm bg-sky-200 ring-1 ring-sky-300" />
               Goalie
+            </span>
+            <span className="inline-flex items-center gap-2">
+              <input type="checkbox" checked readOnly className="h-4 w-4" />
+              At Evals
             </span>
           </div>
         </div>
@@ -231,41 +292,54 @@ function PlayersPageInner() {
         </div>
       </div>
 
-      <div className="mt-6 flex items-center gap-3">
+      <div className="mt-6 flex flex-wrap items-center gap-3">
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Search player..."
           className="w-full max-w-md rounded-md border px-3 py-2 text-sm"
         />
+
         <button
           onClick={loadPlayers}
           className="rounded-md border px-3 py-2 text-sm hover:bg-accent"
         >
           Refresh
         </button>
+
+        {(canToggleEvals ? (
+          <button
+            onClick={seedNumbers}
+            disabled={seeding}
+            className="rounded-md border px-3 py-2 text-sm hover:bg-accent disabled:opacity-60"
+            title="Assign permanent numbers to any players missing a number"
+          >
+            {seeding ? "Assigning…" : "Assign Numbers"}
+          </button>
+        ) : null) as any}
+
+        {(canSaveAllAdmin || canToggleEvals) ? (
+          <button
+            type="button"
+            onClick={saveAll}
+            disabled={savingAll}
+            className="rounded-md border px-3 py-2 text-sm hover:bg-accent disabled:opacity-60"
+          >
+            {savingAll ? "Saving…" : "Save"}
+          </button>
+        ) : null}
       </div>
+
+      {err ? <div className="mt-4 text-sm text-rose-600">{err}</div> : null}
 
       <div className="mt-6 rounded-xl border overflow-hidden">
         <div className="grid grid-cols-12 gap-0 bg-muted px-3 py-2 text-xs font-semibold">
+          <div className="col-span-1">#</div>
           <div className="col-span-3">Player</div>
           <div className="col-span-2">Rating (Spring 2026)</div>
           <div className="col-span-1">GK</div>
-          <div className="col-span-5">Parent&apos;s Comment</div>
-          <div className="col-span-1 flex justify-end">
-            {canSave ? (
-              <button
-                type="button"
-                onClick={saveAll}
-                disabled={savingAll}
-                className="rounded-md border px-2 py-1 text-xs hover:bg-accent disabled:opacity-60"
-              >
-                {savingAll ? "Saving…" : "Save All"}
-              </button>
-            ) : (
-              <span />
-            )}
-          </div>
+          <div className="col-span-1">Evals</div>
+          <div className="col-span-4">Parent&apos;s Comment</div>
         </div>
 
         {loading ? (
@@ -301,6 +375,10 @@ function PlayersPageInner() {
                       p.isGoalie ? "bg-sky-50" : undefined
                     )}
                   >
+                    <div className="col-span-1 font-mono text-xs text-muted-foreground">
+                      {p.evalNumber ?? "—"}
+                    </div>
+
                     <div className="col-span-3">
                       <button
                         type="button"
@@ -316,7 +394,7 @@ function PlayersPageInner() {
                     <div className="col-span-2">
                       <div className="flex items-center gap-2">
                         <Stars value={p.spring2026Rating ?? null} />
-                        {canSave ? (
+                        {canSaveAllAdmin ? (
                           <input
                             type="number"
                             min={1}
@@ -340,16 +418,15 @@ function PlayersPageInner() {
                     </div>
 
                     <div className="col-span-1">
-                      <div className="flex items-center gap-2">
-                        {p.isGoalie ? (
-                          <span className="inline-flex items-center rounded-md bg-sky-200 px-2 py-0.5 text-xs font-semibold text-sky-900">
-                            GK
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-
-                        {canSave ? (
+                      {p.isGoalie ? (
+                        <span className="inline-flex items-center rounded-md bg-sky-200 px-2 py-0.5 text-xs font-semibold text-sky-900">
+                          GK
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                      {canSaveAllAdmin ? (
+                        <div className="mt-1">
                           <input
                             type="checkbox"
                             checked={!!p.isGoalie}
@@ -359,18 +436,27 @@ function PlayersPageInner() {
                             className="h-4 w-4"
                             aria-label="Toggle goalie"
                           />
-                        ) : null}
-                      </div>
+                        </div>
+                      ) : null}
                     </div>
 
-                    <div className="col-span-5">
+                    <div className="col-span-1">
+                      <input
+                        type="checkbox"
+                        checked={!!p.evalAttended}
+                        onChange={(e) =>
+                          setField(p.id, { evalAttended: e.target.checked })
+                        }
+                        className="h-4 w-4"
+                        aria-label="At evals"
+                        disabled={!canToggleEvals}
+                      />
+                    </div>
+
+                    <div className="col-span-4">
                       <div className="text-muted-foreground whitespace-pre-wrap break-words">
                         {parentComment}
                       </div>
-                    </div>
-
-                    <div className="col-span-1 flex justify-end">
-                      <span className="text-xs text-muted-foreground"></span>
                     </div>
                   </div>
 
