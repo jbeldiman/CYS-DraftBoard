@@ -192,6 +192,7 @@ model DraftEvent {
   picks        DraftPick[]
   siblingCosts SiblingDraftCost[]
   trades       Trade[]
+  boards       DraftBoard[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -213,6 +214,8 @@ model DraftTeam {
 
   tradesSent     Trade[] @relation("TradeFromTeam")
   tradesReceived Trade[] @relation("TradeToTeam")
+
+  boards DraftBoard[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -312,4 +315,21 @@ model SiblingDraftCost {
   @@unique([draftEventId, playerId])
   @@index([draftEventId, groupKey])
   @@index([draftEventId])
+}
+
+model DraftBoard {
+  id          String     @id @default(cuid())
+  draftEventId String
+  draftEvent   DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
+
+  teamId String
+  team   DraftTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  entries Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([draftEventId, teamId])
+  @@index([draftEventId, teamId])
 }
