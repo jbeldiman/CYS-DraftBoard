@@ -23,7 +23,10 @@ function Stars({ value }: { value: number | null }) {
       {Array.from({ length: 5 }).map((_, i) => (
         <span
           key={i}
-          className={cx("text-base leading-none", i < v ? "text-amber-500" : "text-muted-foreground/40")}
+          className={cx(
+            "text-base leading-none",
+            i < v ? "text-amber-500" : "text-muted-foreground/40"
+          )}
         >
           ★
         </span>
@@ -76,7 +79,9 @@ function Segmented({
             onClick={() => onChange(o.value)}
             className={cx(
               "px-3 py-1.5 text-xs rounded-lg transition",
-              active ? "bg-muted font-semibold" : "text-muted-foreground hover:bg-muted/50"
+              active
+                ? "bg-muted font-semibold"
+                : "text-muted-foreground hover:bg-muted/50"
             )}
           >
             {o.label}
@@ -157,7 +162,9 @@ function snakeTeamIndexFromOverallPick(overallPick1: number, teamCount: number) 
   return { round, index, posInRound };
 }
 
-async function fetchTeamsFallback(): Promise<Array<{ id: string; name: string; order: number }>> {
+async function fetchTeamsFallback(): Promise<
+  Array<{ id: string; name: string; order: number }>
+> {
   try {
     const res = await fetch("/api/admin/teams", { cache: "no-store" });
     if (!res.ok) return [];
@@ -169,7 +176,8 @@ async function fetchTeamsFallback(): Promise<Array<{ id: string; name: string; o
       .map((t) => {
         const id = String(t?.id ?? "");
         const name = String(t?.name ?? t?.teamName ?? "");
-        const orderRaw = t?.order ?? t?.draftOrder ?? t?.coachOrder ?? t?.sortOrder ?? null;
+        const orderRaw =
+          t?.order ?? t?.draftOrder ?? t?.coachOrder ?? t?.sortOrder ?? null;
         const order = typeof orderRaw === "number" ? orderRaw : Number(orderRaw);
         if (!id || !name) return null;
         return { id, name, order: Number.isFinite(order) ? order : 0 };
@@ -240,7 +248,9 @@ type ServerBoardPayload = {
   entries: DraftBoardEntry[];
 };
 
-async function tryFetchBoardFromServer(teamId: string | null): Promise<{ ok: boolean; entries: DraftBoardEntry[] }> {
+async function tryFetchBoardFromServer(
+  teamId: string | null
+): Promise<{ ok: boolean; entries: DraftBoardEntry[] }> {
   try {
     const qs = teamId ? `?teamId=${encodeURIComponent(teamId)}` : "";
     const res = await fetch(`/api/draft/board${qs}`, { cache: "no-store" });
@@ -254,7 +264,8 @@ async function tryFetchBoardFromServer(teamId: string | null): Promise<{ ok: boo
     const normalized = entries
       .map((e) => {
         const playerId = String(e?.playerId ?? e?.id ?? "");
-        const addedAt = toNumberOrNull(e?.addedAt ?? e?.createdAt ?? Date.now()) ?? Date.now();
+        const addedAt =
+          toNumberOrNull(e?.addedAt ?? e?.createdAt ?? Date.now()) ?? Date.now();
         const slot = toNumberOrNull(e?.slot) ?? undefined;
         if (!playerId) return null;
         return { playerId, addedAt, slot } as DraftBoardEntry;
@@ -267,7 +278,10 @@ async function tryFetchBoardFromServer(teamId: string | null): Promise<{ ok: boo
   }
 }
 
-async function trySaveBoardToServer(teamId: string | null, entries: DraftBoardEntry[]): Promise<boolean> {
+async function trySaveBoardToServer(
+  teamId: string | null,
+  entries: DraftBoardEntry[]
+): Promise<boolean> {
   try {
     const qs = teamId ? `?teamId=${encodeURIComponent(teamId)}` : "";
     const res = await fetch(`/api/draft/board${qs}`, {
@@ -282,7 +296,10 @@ async function trySaveBoardToServer(teamId: string | null, entries: DraftBoardEn
   }
 }
 
-async function adminPlacePick(overallNumber: number, playerId: string): Promise<{ ok: boolean; error?: string }> {
+async function adminPlacePick(
+  overallNumber: number,
+  playerId: string
+): Promise<{ ok: boolean; error?: string }> {
   try {
     let res = await fetch("/api/draft/admin/pick", {
       method: "POST",
@@ -310,7 +327,10 @@ async function adminPlacePick(overallNumber: number, playerId: string): Promise<
 }
 
 export default function DraftPage() {
-  const fallbackScheduledTarget = useMemo(() => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)), []);
+  const fallbackScheduledTarget = useMemo(
+    () => new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
+    []
+  );
 
   const [now, setNow] = useState(() => new Date());
   const [state, setState] = useState<DraftState | null>(null);
@@ -332,7 +352,9 @@ export default function DraftPage() {
   const lastSavedBoardRef = useRef<string>("");
 
   const [isCompact, setIsCompact] = useState(false);
-  const [mobileTab, setMobileTab] = useState<"eligible" | "board" | "roster">("eligible");
+  const [mobileTab, setMobileTab] = useState<"eligible" | "board" | "roster">(
+    "eligible"
+  );
 
   const [slotPickerOpen, setSlotPickerOpen] = useState(false);
   const [slotPickerSlot, setSlotPickerSlot] = useState<number | null>(null);
@@ -376,7 +398,9 @@ export default function DraftPage() {
     const localKey = draftBoardKeyForTeam(teamId);
 
     const normalizeLegacy = (entries: DraftBoardEntry[]) => {
-      const hasSlots = entries.some((e) => typeof e.slot === "number" && Number.isFinite(e.slot as any));
+      const hasSlots = entries.some(
+        (e) => typeof e.slot === "number" && Number.isFinite(e.slot as any)
+      );
       if (hasSlots) return entries;
 
       return entries
@@ -395,7 +419,8 @@ export default function DraftPage() {
         lastSavedBoardRef.current = JSON.stringify(normalized);
         return;
       }
-      if (serverBoardSupportedRef.current == null) serverBoardSupportedRef.current = false;
+      if (serverBoardSupportedRef.current == null)
+        serverBoardSupportedRef.current = false;
     }
 
     const entries = safeReadJSON<DraftBoardEntry[]>(localKey, []);
@@ -468,9 +493,10 @@ export default function DraftPage() {
 
   async function loadRemaining() {
     try {
-      const res = await fetch("/api/draft/players?eligible=true&drafted=false&includeRatings=true", {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        "/api/draft/players?eligible=true&drafted=false&includeRatings=true",
+        { cache: "no-store" }
+      );
       const json = await res.json().catch(() => ({}));
 
       setRemaining(
@@ -481,7 +507,6 @@ export default function DraftPage() {
         }))
       );
     } catch {
-      setRemaining([]);
     }
   }
 
@@ -505,10 +530,12 @@ export default function DraftPage() {
   }, []);
 
   useEffect(() => {
+    if (!remaining || remaining.length === 0) return;
+
     const remainingIds = new Set(remaining.map((p) => p.id));
     const pruned = draftBoard.filter((e) => remainingIds.has(e.playerId));
     if (pruned.length !== draftBoard.length) setDraftBoardAndPersist(pruned, myTeamId);
-  }, [remaining]);
+  }, [remaining, draftBoard, myTeamId]);
 
   const event = state?.event ?? null;
   const teams = state?.teams ?? [];
@@ -684,7 +711,11 @@ export default function DraftPage() {
     setDraftBoardAndPersist(
       next
         .slice()
-        .sort((a, b) => (a.slot ?? 999999) - (b.slot ?? 999999) || (a.addedAt ?? 0) - (b.addedAt ?? 0)),
+        .sort(
+          (a, b) =>
+            (a.slot ?? 999999) - (b.slot ?? 999999) ||
+            (a.addedAt ?? 0) - (b.addedAt ?? 0)
+        ),
       myTeamId
     );
   }
@@ -708,7 +739,10 @@ export default function DraftPage() {
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         const msg =
-          j?.error ?? (res.status === 404 ? "Missing endpoint: POST /api/draft/pick" : "Failed to draft player");
+          j?.error ??
+          (res.status === 404
+            ? "Missing endpoint: POST /api/draft/pick"
+            : "Failed to draft player");
         throw new Error(msg);
       }
 
@@ -743,13 +777,19 @@ export default function DraftPage() {
   }
 
   const teamHint =
-    !myTeamId ? (role === "COACH" ? "No team assigned to this coach yet" : "Tip: add ?teamId=YOUR_TEAM_ID") : null;
+    !myTeamId
+      ? role === "COACH"
+        ? "No team assigned to this coach yet"
+        : "Tip: add ?teamId=YOUR_TEAM_ID"
+      : null;
 
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center py-16">
         <div className="text-lg font-semibold">Loading…</div>
-        <div className="mt-2 text-sm text-muted-foreground">Connecting to draft state</div>
+        <div className="mt-2 text-sm text-muted-foreground">
+          Connecting to draft state
+        </div>
       </div>
     );
   }
@@ -769,17 +809,28 @@ export default function DraftPage() {
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-semibold tracking-tight">{isLive ? "Draft Room" : "Draft Countdown"}</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {isLive ? "Draft Room" : "Draft Countdown"}
+              </h1>
               <Pill tone="neutral">Status: {event?.phase ?? "SETUP"}</Pill>
-              {isLive ? (event?.isPaused ? <Pill tone="warn">⏸ Paused</Pill> : <Pill tone="good">● Live</Pill>) : null}
+              {isLive ? (
+                event?.isPaused ? (
+                  <Pill tone="warn">⏸ Paused</Pill>
+                ) : (
+                  <Pill tone="good">● Live</Pill>
+                )
+              ) : null}
               {teamHint ? <Pill tone="warn">{teamHint}</Pill> : null}
-              {isLive && teamCount === 0 ? <Pill tone="bad">No teams loaded</Pill> : null}
+              {isLive && teamCount === 0 ? (
+                <Pill tone="bad">No teams loaded</Pill>
+              ) : null}
               {isLive && isMyTurn ? <Pill tone="good">It’s your turn</Pill> : null}
               {teamCount > 0 ? <Pill tone="neutral">Rounds: {rounds}</Pill> : null}
             </div>
 
             <div className="mt-1 text-sm text-muted-foreground">
-              {event?.name ?? "CYS Draft"} · Remaining: {undraftedCount} · Drafted: {draftedCount}
+              {event?.name ?? "CYS Draft"} · Remaining: {undraftedCount} · Drafted:{" "}
+              {draftedCount}
             </div>
 
             {!isLive ? (
@@ -806,7 +857,9 @@ export default function DraftPage() {
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">Current Pick</div>
-                <div className="text-lg font-semibold tabular-nums">#{event?.currentPick ?? 1}</div>
+                <div className="text-lg font-semibold tabular-nums">
+                  #{event?.currentPick ?? 1}
+                </div>
                 <div className="text-xs text-muted-foreground truncate">
                   {onClockTeam?.name ?? (teamCount ? "—" : "No teams")}
                 </div>
@@ -814,7 +867,9 @@ export default function DraftPage() {
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">On Deck</div>
-                <div className="text-lg font-semibold truncate">{onDeckTeam?.name ?? (teamCount ? "—" : "No teams")}</div>
+                <div className="text-lg font-semibold truncate">
+                  {onDeckTeam?.name ?? (teamCount ? "—" : "No teams")}
+                </div>
                 <div className="text-xs text-muted-foreground">Next up</div>
               </div>
 
@@ -823,14 +878,20 @@ export default function DraftPage() {
                 <div className="text-lg font-bold tabular-nums">
                   {pad2(liveMin)}:{pad2(liveSec)}
                 </div>
-                <div className="text-xs text-muted-foreground">{event?.isPaused ? "Paused" : "Time left"}</div>
+                <div className="text-xs text-muted-foreground">
+                  {event?.isPaused ? "Paused" : "Time left"}
+                </div>
               </div>
 
               <div className="rounded-2xl border bg-background px-4 py-3 shadow-sm">
                 <div className="text-[11px] text-muted-foreground">Last Pick</div>
-                <div className="text-sm font-semibold truncate">{lastPick?.player.fullName ?? "—"}</div>
+                <div className="text-sm font-semibold truncate">
+                  {lastPick?.player.fullName ?? "—"}
+                </div>
                 <div className="mt-1 flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground truncate">{lastPick?.team?.name ?? "—"}</span>
+                  <span className="text-xs text-muted-foreground truncate">
+                    {lastPick?.team?.name ?? "—"}
+                  </span>
                   <Stars value={rankToStars(lastPick?.player?.rank ?? null)} />
                 </div>
               </div>
@@ -851,7 +912,11 @@ export default function DraftPage() {
                 { value: "roster", label: "Roster" },
               ]}
             />
-            {isLive ? <Pill tone={canDraftAny ? "good" : "neutral"}>{canDraftAny ? "Drafting on" : "Drafting off"}</Pill> : null}
+            {isLive ? (
+              <Pill tone={canDraftAny ? "good" : "neutral"}>
+                {canDraftAny ? "Drafting on" : "Drafting off"}
+              </Pill>
+            ) : null}
           </div>
         ) : null}
 
@@ -863,14 +928,18 @@ export default function DraftPage() {
                 <span className="text-xs text-muted-foreground">Force pick #</span>
                 <input
                   value={String(adminPickNumber)}
-                  onChange={(e) => setAdminPickNumber(Math.max(1, Number(e.target.value || 1)))}
+                  onChange={(e) =>
+                    setAdminPickNumber(Math.max(1, Number(e.target.value || 1)))
+                  }
                   className="h-9 w-24 rounded-md border px-3 text-sm tabular-nums"
                   inputMode="numeric"
                 />
                 <Pill tone="neutral">Use “Place” buttons</Pill>
               </div>
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">Assign a player to any overall pick number.</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              Assign a player to any overall pick number.
+            </div>
           </div>
         ) : null}
       </div>
@@ -881,7 +950,8 @@ export default function DraftPage() {
             <div>
               <div className="text-sm font-semibold">My Roster</div>
               <div className="text-xs text-muted-foreground">
-                Populates automatically from picks for your team{!myTeamId ? " (missing teamId)" : ""}
+                Populates automatically from picks for your team
+                {!myTeamId ? " (missing teamId)" : ""}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -892,7 +962,8 @@ export default function DraftPage() {
           {!myTeamId ? (
             <div className="mt-3 text-sm text-muted-foreground">
               Add <span className="font-semibold">?teamId=</span> to the URL (or set{" "}
-              <span className="font-semibold">{MY_TEAM_ID_KEY}</span> in localStorage) to enable roster.
+              <span className="font-semibold">{MY_TEAM_ID_KEY}</span> in localStorage) to
+              enable roster.
             </div>
           ) : myRoster.length === 0 ? (
             <div className="mt-3 text-sm text-muted-foreground">No picks yet.</div>
@@ -906,7 +977,9 @@ export default function DraftPage() {
               <div className="divide-y">
                 {myRoster.map((p) => (
                   <div key={p.id} className="grid grid-cols-12 px-3 py-2 text-sm">
-                    <div className="col-span-7 font-semibold truncate">{p.player.fullName}</div>
+                    <div className="col-span-7 font-semibold truncate">
+                      {p.player.fullName}
+                    </div>
                     <div className="col-span-3 flex items-center">
                       <Stars value={rankToStars(p.player.rank)} />
                     </div>
@@ -970,11 +1043,7 @@ export default function DraftPage() {
                           {isCompact ? (
                             <div className="mt-1 text-xs text-muted-foreground flex items-center justify-between">
                               <Stars value={p.rating} />
-                              {onLocalBoard ? (
-                                <span className="text-[11px]">On board</span>
-                              ) : (
-                                <span className="text-[11px]">—</span>
-                              )}
+                              {onLocalBoard ? <span className="text-[11px]">On board</span> : <span className="text-[11px]">—</span>}
                             </div>
                           ) : null}
                         </div>
@@ -1055,7 +1124,10 @@ export default function DraftPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Pill tone="neutral">{draftBoard.length}</Pill>
-                <button onClick={clearDraftBoard} className="h-9 sm:h-8 rounded-md border px-3 sm:px-2 text-xs hover:bg-muted">
+                <button
+                  onClick={clearDraftBoard}
+                  className="h-9 sm:h-8 rounded-md border px-3 sm:px-2 text-xs hover:bg-muted"
+                >
                   Clear
                 </button>
               </div>
@@ -1169,10 +1241,17 @@ export default function DraftPage() {
             <div className="p-4 border-b">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold">Select player for Round {slotPickerSlot ?? "?"}</div>
-                  <div className="text-xs text-muted-foreground">Only eligible/undrafted players are shown.</div>
+                  <div className="text-sm font-semibold">
+                    Select player for Round {slotPickerSlot ?? "?"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Only eligible/undrafted players are shown.
+                  </div>
                 </div>
-                <button onClick={() => setSlotPickerOpen(false)} className="h-9 rounded-md border px-3 text-xs hover:bg-muted">
+                <button
+                  onClick={() => setSlotPickerOpen(false)}
+                  className="h-9 rounded-md border px-3 text-xs hover:bg-muted"
+                >
                   Close
                 </button>
               </div>
@@ -1201,7 +1280,9 @@ export default function DraftPage() {
                   >
                     <div className="min-w-0">
                       <div className="font-semibold truncate">{p.fullName}</div>
-                      <div className="text-xs text-muted-foreground">Click to assign to Round {slotPickerSlot}</div>
+                      <div className="text-xs text-muted-foreground">
+                        Click to assign to Round {slotPickerSlot}
+                      </div>
                     </div>
                     <Stars value={p.rating} />
                   </button>
