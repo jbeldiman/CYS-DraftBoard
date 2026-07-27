@@ -16,18 +16,25 @@ function normSecret(v: unknown) {
   return String(v ?? "").replace(/\r?\n$/, "");
 }
 
+function authUser(user: any) {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    isDraftCoach: user.isDraftCoach,
+    coachDivision: user.coachDivision,
+    coachesU11: !!user.coachesU11,
+    coachesU13: !!user.coachesU13,
+    isViewer: !!user.isViewer,
+  } as any;
+}
+
 export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
-
   adapter: PrismaAdapter(prisma),
-
-  session: {
-    strategy: "jwt",
-  },
-
-  pages: {
-    signIn: "/login",
-  },
+  session: { strategy: "jwt" },
+  pages: { signIn: "/login" },
 
   providers: [
     CredentialsProvider({
@@ -39,7 +46,6 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         const email = normEmail(credentials?.email);
         const password = String(credentials?.password ?? "");
-
         if (!email || !password) return null;
 
         const allowDefaultAdmin = normBool(process.env.ALLOW_DEFAULT_ADMIN);
@@ -50,9 +56,7 @@ export const authOptions: NextAuthOptions = {
           const existing = await prisma.user.findUnique({ where: { email } });
 
           if (!existing) {
-            const ok = password === masterAdminPassword;
-            if (!ok) return null;
-
+            if (password !== masterAdminPassword) return null;
             const created = await prisma.user.create({
               data: {
                 email,
@@ -61,21 +65,12 @@ export const authOptions: NextAuthOptions = {
                 passwordHash: await bcrypt.hash(masterAdminPassword, 10),
               },
             });
-
-            return {
-              id: created.id,
-              email: created.email,
-              name: created.name,
-              role: created.role,
-              isDraftCoach: created.isDraftCoach,
-              coachDivision: created.coachDivision,
-            } as any;
+            return authUser(created);
           }
 
-          const storedHash = (existing as any).passwordHash ? String((existing as any).passwordHash) : "";
+          const storedHash = existing.passwordHash ? String(existing.passwordHash) : "";
           const okPlain = password === masterAdminPassword;
           const okHash = storedHash ? await bcrypt.compare(password, storedHash) : false;
-
           if (!okPlain && !okHash) return null;
 
           if (existing.role !== "ADMIN") {
@@ -83,43 +78,16 @@ export const authOptions: NextAuthOptions = {
               where: { id: existing.id },
               data: { role: "ADMIN" },
             });
-            return {
-              id: updated.id,
-              email: updated.email,
-              name: updated.name,
-              role: updated.role,
-              isDraftCoach: updated.isDraftCoach,
-              coachDivision: updated.coachDivision,
-            } as any;
+            return authUser(updated);
           }
-
-          return {
-            id: existing.id,
-            email: existing.email,
-            name: existing.name,
-            role: existing.role,
-            isDraftCoach: existing.isDraftCoach,
-            coachDivision: existing.coachDivision,
-          } as any;
+          return authUser(existing);
         }
 
-        const user = await prisma.user.findUnique({
-          where: { email },
-        });
-
+        const user = await prisma.user.findUnique({ where: { email } });
         if (!user) return null;
-
-        const ok = await bcrypt.compare(password, (user as any).passwordHash ?? "");
+        const ok = await bcrypt.compare(password, user.passwordHash ?? "");
         if (!ok) return null;
-
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          isDraftCoach: user.isDraftCoach,
-          coachDivision: user.coachDivision,
-        } as any;
+        return authUser(user);
       },
     }),
   ],
@@ -131,18 +99,32 @@ export const authOptions: NextAuthOptions = {
         (token as any).role = (user as any).role;
         (token as any).isDraftCoach = !!(user as any).isDraftCoach;
         (token as any).coachDivision = (user as any).coachDivision ?? null;
+        (token as any).coachesU11 = !!(user as any).coachesU11;
+        (token as any).coachesU13 = !!(user as any).coachesU13;
+        (token as any).isViewer = !!(user as any).isViewer;
       } else if ((token as any).email) {
         const email = normEmail((token as any).email);
         if (email) {
           const dbUser = await prisma.user.findUnique({
             where: { email },
-            select: { id: true, role: true, isDraftCoach: true, coachDivision: true },
+            select: {
+              id: true,
+              role: true,
+              isDraftCoach: true,
+              coachDivision: true,
+              coachesU11: true,
+              coachesU13: true,
+              isViewer: true,
+            },
           });
           if (dbUser) {
             (token as any).id = dbUser.id;
             (token as any).role = dbUser.role;
             (token as any).isDraftCoach = dbUser.isDraftCoach;
             (token as any).coachDivision = dbUser.coachDivision;
+            (token as any).coachesU11 = dbUser.coachesU11;
+            (token as any).coachesU13 = dbUser.coachesU13;
+            (token as any).isViewer = dbUser.isViewer;
           }
         }
       }
@@ -154,6 +136,9 @@ export const authOptions: NextAuthOptions = {
       (session.user as any).role = (token as any).role;
       (session.user as any).isDraftCoach = !!(token as any).isDraftCoach;
       (session.user as any).coachDivision = (token as any).coachDivision ?? null;
+      (session.user as any).coachesU11 = !!(token as any).coachesU11;
+      (session.user as any).coachesU13 = !!(token as any).coachesU13;
+      (session.user as any).isViewer = !!(token as any).isViewer;
       return session;
     },
   },

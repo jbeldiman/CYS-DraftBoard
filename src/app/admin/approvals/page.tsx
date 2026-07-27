@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type AccessRequest = {
   id: string;
-  type: "COACH" | "BOARD";
+  type: "COACH" | "BOARD" | "VIEWER";
   requestedDivision: "U11" | "U13" | null;
   status: "PENDING" | "APPROVED" | "DENIED";
   requestedAt: string;
@@ -96,7 +96,7 @@ export default function ApprovalsPage() {
         <div className="flex items-start justify-between gap-3 mb-6">
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Approvals</h1>
-            <p className="text-sm text-gray-600">Approve CYS Board, U11 Coach, and U13 Coach account requests.</p>
+            <p className="text-sm text-gray-600">Approve CYS Board, U11 Coach, U13 Coach, and Viewer account requests.</p>
           </div>
           <button
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50"
@@ -138,7 +138,11 @@ export default function ApprovalsPage() {
                   <tr key={r.id} className="border-b">
                     <td className="py-3 pr-3 text-sm text-gray-900">
                       <span className="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold">
-                        {r.type === "BOARD" ? "CYS Board" : `${r.requestedDivision ?? "Unassigned"} Coach`}
+                        {r.type === "BOARD"
+                          ? "CYS Board"
+                          : r.type === "VIEWER"
+                            ? "Viewer"
+                            : `${r.requestedDivision ?? "Unassigned"} Coach`}
                       </span>
                     </td>
                     <td className="py-3 pr-3 text-sm text-gray-900">{r.user.name ?? "—"}</td>

@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     const type = (searchParams.get("type") ?? "").toUpperCase();
 
     const where: any = { status };
-    if (type === "COACH" || type === "BOARD") where.type = type;
+    if (type === "COACH" || type === "BOARD" || type === "VIEWER") where.type = type;
 
     const items = await prisma.accessRequest.findMany({
       where,

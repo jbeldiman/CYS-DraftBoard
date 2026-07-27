@@ -2,18 +2,21 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type AccessLevel = "ADMIN" | "BOARD" | "U11_COACH" | "U13_COACH" | "PARENT";
-type Filter = "ALL" | AccessLevel;
+type Filter = "ALL" | "BOARD" | "U11_COACH" | "U13_COACH" | "VIEWER" | "PARENT";
 
 type ManagedUser = {
   id: string;
   name: string | null;
   email: string | null;
   role: string;
-  isDraftCoach: boolean;
-  coachDivision: "U11" | "U13" | null;
-  coachOrder: number;
-  accessLevel: AccessLevel;
+  isAdminAccount: boolean;
+  isBoardMember: boolean;
+  coachesU11: boolean;
+  coachesU13: boolean;
+  isViewer: boolean;
+  u11CoachOrder: number;
+  u13CoachOrder: number;
+  hasNoDraftAccess: boolean;
   isCurrentUser: boolean;
   createdAt: string;
   updatedAt: string;
@@ -25,13 +28,17 @@ type Counts = {
   BOARD: number;
   U11_COACH: number;
   U13_COACH: number;
+  VIEWER: number;
   PARENT: number;
 };
 
 type EditForm = {
   name: string;
   email: string;
-  accessLevel: AccessLevel;
+  isBoardMember: boolean;
+  coachesU11: boolean;
+  coachesU13: boolean;
+  isViewer: boolean;
   password: string;
 };
 
@@ -41,35 +48,18 @@ const EMPTY_COUNTS: Counts = {
   BOARD: 0,
   U11_COACH: 0,
   U13_COACH: 0,
+  VIEWER: 0,
   PARENT: 0,
 };
 
-const ACCESS_DETAILS: Record<AccessLevel, { label: string; className: string; description: string }> = {
-  ADMIN: {
-    label: "Admin",
-    className: "border-amber-300 bg-amber-50 text-amber-900",
-    description: "Full access. Protected and cannot be reassigned here.",
-  },
-  BOARD: {
-    label: "CYS Board",
-    className: "border-indigo-300 bg-indigo-50 text-indigo-900",
-    description: "Can view both U11 and U13 player pools and board resources.",
-  },
-  U11_COACH: {
-    label: "U11 Coach",
-    className: "border-sky-300 bg-sky-50 text-sky-900",
-    description: "Receives U11 player-pool access and joins the U11 draft order.",
-  },
-  U13_COACH: {
-    label: "U13 Coach",
-    className: "border-emerald-300 bg-emerald-50 text-emerald-900",
-    description: "Receives U13 player-pool access and joins the U13 draft order.",
-  },
-  PARENT: {
-    label: "No Draft Access",
-    className: "border-slate-300 bg-slate-50 text-slate-700",
-    description: "Account remains available, but has no coach or board access.",
-  },
+const EMPTY_FORM: EditForm = {
+  name: "",
+  email: "",
+  isBoardMember: false,
+  coachesU11: false,
+  coachesU13: false,
+  isViewer: false,
+  password: "",
 };
 
 async function apiMessage(response: Response) {
@@ -84,6 +74,42 @@ function formatDate(value: string) {
     : date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function AccessBadge({ className, children }: { className: string; children: React.ReactNode }) {
+  return <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${className}`}>{children}</span>;
+}
+
+function AccessOption({
+  checked,
+  disabled = false,
+  title,
+  description,
+  className,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  title: string;
+  description: string;
+  className: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`flex cursor-pointer gap-3 rounded-xl border p-3 ${className} ${disabled ? "cursor-not-allowed opacity-70" : ""}`}>
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-1 h-4 w-4"
+      />
+      <span>
+        <span className="block font-black">{title}</span>
+        <span className="mt-0.5 block text-xs font-semibold opacity-80">{description}</span>
+      </span>
+    </label>
+  );
+}
+
 export default function UserManagementPanel({
   onUserUpdated,
 }: {
@@ -94,7 +120,7 @@ export default function UserManagementPanel({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("ALL");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<EditForm>({ name: "", email: "", accessLevel: "PARENT", password: "" });
+  const [form, setForm] = useState<EditForm>(EMPTY_FORM);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
@@ -120,7 +146,11 @@ export default function UserManagementPanel({
   const visibleUsers = useMemo(() => {
     const query = search.trim().toLowerCase();
     return users.filter((user) => {
-      if (filter !== "ALL" && user.accessLevel !== filter) return false;
+      if (filter === "BOARD" && !user.isBoardMember) return false;
+      if (filter === "U11_COACH" && !user.coachesU11) return false;
+      if (filter === "U13_COACH" && !user.coachesU13) return false;
+      if (filter === "VIEWER" && !user.isViewer) return false;
+      if (filter === "PARENT" && !user.hasNoDraftAccess) return false;
       if (!query) return true;
       return `${user.name ?? ""} ${user.email ?? ""}`.toLowerCase().includes(query);
     });
@@ -131,7 +161,10 @@ export default function UserManagementPanel({
     setForm({
       name: user.name ?? "",
       email: user.email ?? "",
-      accessLevel: user.accessLevel,
+      isBoardMember: user.isBoardMember,
+      coachesU11: user.coachesU11,
+      coachesU13: user.coachesU13,
+      isViewer: user.isViewer,
       password: "",
     });
     setError(null);
@@ -140,7 +173,7 @@ export default function UserManagementPanel({
 
   function cancelEdit() {
     setEditingId(null);
-    setForm({ name: "", email: "", accessLevel: "PARENT", password: "" });
+    setForm(EMPTY_FORM);
   }
 
   async function saveUser(user: ManagedUser) {
@@ -159,7 +192,7 @@ export default function UserManagementPanel({
       await loadUsers();
       await onUserUpdated?.();
       setEditingId(null);
-      setForm({ name: "", email: "", accessLevel: "PARENT", password: "" });
+      setForm(EMPTY_FORM);
       setMessage(json?.message ?? "User access updated.");
     } catch (saveError: any) {
       setError(saveError?.message ?? "Failed to update user");
@@ -172,6 +205,7 @@ export default function UserManagementPanel({
     { id: "ALL", label: "All Users", count: counts.total },
     { id: "U11_COACH", label: "U11 Coaches", count: counts.U11_COACH },
     { id: "U13_COACH", label: "U13 Coaches", count: counts.U13_COACH },
+    { id: "VIEWER", label: "Viewers", count: counts.VIEWER },
     { id: "BOARD", label: "CYS Board", count: counts.BOARD },
     { id: "PARENT", label: "No Draft Access", count: counts.PARENT },
   ];
@@ -184,7 +218,8 @@ export default function UserManagementPanel({
             <div className="text-xs font-bold uppercase tracking-[0.18em] text-sky-300">Returning accounts</div>
             <h2 className="mt-1 text-2xl font-black">Users & Seasonal Access</h2>
             <p className="mt-1 max-w-3xl text-sm text-slate-300">
-              Reuse existing logins by assigning each returning coach or board member to this season’s access level. Historical teams and picks stay untouched.
+              Access is additive. One person may be on the CYS Board, coach U11, and coach U13 at the same time.
+              Historical teams and picks stay untouched.
             </p>
           </div>
           <button
@@ -197,7 +232,7 @@ export default function UserManagementPanel({
           </button>
         </div>
 
-        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
           {filters.map((item) => (
             <button
               type="button"
@@ -214,6 +249,9 @@ export default function UserManagementPanel({
             </button>
           ))}
         </div>
+        <p className="mt-3 text-xs font-semibold text-slate-400">
+          Counts can overlap because the same person may hold multiple assignments.
+        </p>
       </div>
 
       <div className="p-5">
@@ -225,7 +263,7 @@ export default function UserManagementPanel({
             className="min-w-[260px] flex-1 rounded-xl border border-slate-300 px-4 py-2.5 text-slate-950 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
           />
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-900">
-            Access changes appear after the user signs out and back in.
+            Users should sign out and back in after an access change.
           </div>
         </div>
 
@@ -234,7 +272,6 @@ export default function UserManagementPanel({
 
         <div className="mt-5 space-y-3">
           {visibleUsers.map((user) => {
-            const details = ACCESS_DETAILS[user.accessLevel];
             const editing = editingId === user.id;
             return (
               <article key={user.id} className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
@@ -242,27 +279,25 @@ export default function UserManagementPanel({
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="truncate text-lg font-black text-slate-950">{user.name || "Unnamed user"}</h3>
-                      <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${details.className}`}>
-                        {details.label}
-                      </span>
-                      {user.isCurrentUser ? (
-                        <span className="rounded-full bg-slate-950 px-2.5 py-1 text-xs font-black text-white">You</span>
-                      ) : null}
-                      {user.isDraftCoach && user.coachOrder > 0 ? (
-                        <span className="rounded-full border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-700">
-                          Draft order #{user.coachOrder}
-                        </span>
-                      ) : null}
+                      {user.isAdminAccount ? <AccessBadge className="border-amber-300 bg-amber-50 text-amber-900">Admin</AccessBadge> : null}
+                      {user.isBoardMember ? <AccessBadge className="border-indigo-300 bg-indigo-50 text-indigo-900">CYS Board</AccessBadge> : null}
+                      {user.coachesU11 ? <AccessBadge className="border-sky-300 bg-sky-50 text-sky-900">U11 Coach</AccessBadge> : null}
+                      {user.coachesU13 ? <AccessBadge className="border-emerald-300 bg-emerald-50 text-emerald-900">U13 Coach</AccessBadge> : null}
+                      {user.isViewer ? <AccessBadge className="border-violet-300 bg-violet-50 text-violet-900">Viewer</AccessBadge> : null}
+                      {user.hasNoDraftAccess ? <AccessBadge className="border-slate-300 bg-white text-slate-600">No Draft Access</AccessBadge> : null}
+                      {user.isCurrentUser ? <span className="rounded-full bg-slate-950 px-2.5 py-1 text-xs font-black text-white">You</span> : null}
                     </div>
                     <div className="mt-1 truncate text-sm font-semibold text-slate-700">{user.email || "No email on file"}</div>
-                    <div className="mt-1 text-xs text-slate-500">
-                      Account created {formatDate(user.createdAt)} · {details.description}
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs font-bold text-slate-500">
+                      <span>Created {formatDate(user.createdAt)}</span>
+                      {user.coachesU11 && user.u11CoachOrder > 0 ? <span>U11 order #{user.u11CoachOrder}</span> : null}
+                      {user.coachesU13 && user.u13CoachOrder > 0 ? <span>U13 order #{user.u13CoachOrder}</span> : null}
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => (editing ? cancelEdit() : beginEdit(user))}
-                    className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-black text-white hover:bg-slate-800"
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-black text-slate-800 hover:bg-slate-100"
                   >
                     {editing ? "Cancel" : "Edit Account"}
                   </button>
@@ -270,70 +305,85 @@ export default function UserManagementPanel({
 
                 {editing ? (
                   <div className="border-t border-slate-200 bg-white p-4">
-                    <div className="grid gap-4 lg:grid-cols-2">
-                      <label className="grid gap-1.5 text-sm font-bold text-slate-700">
-                        Full name
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <label className="text-sm font-bold text-slate-700">
+                        Name
                         <input
                           value={form.name}
                           onChange={(event) => setForm((previous) => ({ ...previous, name: event.target.value }))}
-                          className="rounded-xl border border-slate-300 px-3 py-2.5 font-medium text-slate-950"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-medium text-slate-950"
                         />
                       </label>
-                      <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                      <label className="text-sm font-bold text-slate-700">
                         Login email
                         <input
                           value={form.email}
-                          onChange={(event) => setForm((previous) => ({ ...previous, email: event.target.value }))}
                           type="email"
-                          className="rounded-xl border border-slate-300 px-3 py-2.5 font-medium text-slate-950"
-                        />
-                      </label>
-                      <label className="grid gap-1.5 text-sm font-bold text-slate-700">
-                        Seasonal access
-                        <select
-                          value={form.accessLevel}
-                          disabled={user.accessLevel === "ADMIN"}
-                          onChange={(event) =>
-                            setForm((previous) => ({ ...previous, accessLevel: event.target.value as AccessLevel }))
-                          }
-                          className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 font-medium text-slate-950 disabled:bg-slate-100"
-                        >
-                          {user.accessLevel === "ADMIN" ? <option value="ADMIN">Admin — protected</option> : null}
-                          {user.accessLevel !== "ADMIN" ? (
-                            <>
-                              <option value="U11_COACH">U11 Coach</option>
-                              <option value="U13_COACH">U13 Coach</option>
-                              <option value="BOARD">CYS Board</option>
-                              <option value="PARENT">No Draft Access</option>
-                            </>
-                          ) : null}
-                        </select>
-                      </label>
-                      <label className="grid gap-1.5 text-sm font-bold text-slate-700">
-                        New temporary password <span className="font-medium text-slate-500">(optional)</span>
-                        <input
-                          value={form.password}
-                          onChange={(event) => setForm((previous) => ({ ...previous, password: event.target.value }))}
-                          type="password"
-                          placeholder="Leave blank to keep current password"
-                          className="rounded-xl border border-slate-300 px-3 py-2.5 font-medium text-slate-950"
+                          onChange={(event) => setForm((previous) => ({ ...previous, email: event.target.value }))}
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-medium text-slate-950"
                         />
                       </label>
                     </div>
 
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-sm text-slate-600">
-                        Assigning a coach automatically adds them to that division’s coach roster and places them at the end of its current draft order.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => saveUser(user)}
-                        disabled={busy}
-                        className="rounded-xl bg-emerald-700 px-5 py-2.5 font-black text-white hover:bg-emerald-600 disabled:opacity-50"
-                      >
-                        {busy ? "Saving…" : "Save Account Changes"}
-                      </button>
+                    <div className="mt-4">
+                      <div className="text-sm font-black text-slate-950">Seasonal assignments</div>
+                      <div className="mt-2 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                        <AccessOption
+                          checked={user.isAdminAccount || form.isBoardMember}
+                          disabled={user.isAdminAccount}
+                          title={user.isAdminAccount ? "Admin (includes Board access)" : "CYS Board"}
+                          description="View both divisions and board/admin resources."
+                          className="border-indigo-200 bg-indigo-50 text-indigo-950"
+                          onChange={(checked) => setForm((previous) => ({ ...previous, isBoardMember: checked }))}
+                        />
+                        <AccessOption
+                          checked={form.coachesU11}
+                          title="U11 Coach"
+                          description="Join the U11 roster, player pool, and draft order."
+                          className="border-sky-200 bg-sky-50 text-sky-950"
+                          onChange={(checked) => setForm((previous) => ({ ...previous, coachesU11: checked }))}
+                        />
+                        <AccessOption
+                          checked={form.coachesU13}
+                          title="U13 Coach"
+                          description="Join the U13 roster, player pool, and draft order."
+                          className="border-emerald-200 bg-emerald-50 text-emerald-950"
+                          onChange={(checked) => setForm((previous) => ({ ...previous, coachesU13: checked }))}
+                        />
+                        <AccessOption
+                          checked={form.isViewer}
+                          title="Viewer"
+                          description="View the live draft and both player pools without joining a coach roster."
+                          className="border-violet-200 bg-violet-50 text-violet-950"
+                          onChange={(checked) => setForm((previous) => ({ ...previous, isViewer: checked }))}
+                        />
+                      </div>
+                      {!user.isAdminAccount && !form.isBoardMember && !form.coachesU11 && !form.coachesU13 && !form.isViewer ? (
+                        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600">
+                          No boxes selected: this account will remain active but have no draft access.
+                        </div>
+                      ) : null}
                     </div>
+
+                    <label className="mt-4 block text-sm font-bold text-slate-700">
+                      New temporary password <span className="font-medium text-slate-500">(optional; leave blank to keep current password)</span>
+                      <input
+                        value={form.password}
+                        type="password"
+                        placeholder="At least 8 characters"
+                        onChange={(event) => setForm((previous) => ({ ...previous, password: event.target.value }))}
+                        className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 font-medium text-slate-950"
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      onClick={() => saveUser(user)}
+                      disabled={busy}
+                      className="mt-4 w-full rounded-xl bg-indigo-700 px-4 py-3 font-black text-white hover:bg-indigo-600 disabled:opacity-50"
+                    >
+                      {busy ? "Saving…" : "Save Account Changes"}
+                    </button>
                   </div>
                 ) : null}
               </article>
@@ -341,8 +391,8 @@ export default function UserManagementPanel({
           })}
 
           {!loading && visibleUsers.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-10 text-center font-semibold text-slate-500">
-              No users match this filter.
+            <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-10 text-center text-sm font-semibold text-slate-500">
+              No users match this search and filter.
             </div>
           ) : null}
         </div>

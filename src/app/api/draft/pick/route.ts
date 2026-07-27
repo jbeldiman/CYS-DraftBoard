@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { getActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
+import { reserveUndraftedSiblings } from "@/lib/siblingDraft";
+import { coachesDivision } from "@/lib/coachAccess";
 
 export const runtime = "nodejs";
 
@@ -26,13 +28,6 @@ function snakePickInRoundFromOverall(overallPick1: number, teamCount: number) {
   return (p0 % teamCount) + 1;
 }
 
-function parseDraftCost(v: unknown): number | null {
-  const n = typeof v === "string" ? parseInt(v.trim(), 10) : typeof v === "number" ? v : NaN;
-  if (!Number.isFinite(n)) return null;
-  const i = Math.trunc(n);
-  if (i < 1 || i > 10) return null;
-  return i;
-}
 
 async function findNextOpenOverall(tx: any, draftEventId: string, startOverall: number) {
   let candidate = startOverall;
@@ -47,48 +42,13 @@ async function findNextOpenOverall(tx: any, draftEventId: string, startOverall: 
   throw new Error("Unable to advance to next pick (too many filled picks).");
 }
 
-async function findNthUpcomingOpenPickOverallForTeam(args: {
-  tx: any;
-  draftEventId: string;
-  fromOverallExclusive: number;
-  teams: Array<{ id: string }>;
-  teamIndex: number;
-  n: number;
-}) {
-  const { tx, draftEventId, fromOverallExclusive, teams, teamIndex, n } = args;
-
-  const teamCount = teams.length;
-  if (teamCount <= 0) throw new Error("No teams found for this draft event.");
-
-  const maxScan = fromOverallExclusive + teamCount * 60;
-  let found = 0;
-
-  for (let overall = fromOverallExclusive + 1; overall <= maxScan; overall++) {
-    const { index } = snakeTeamIndexFromOverallPick(overall, teamCount);
-    if (index !== teamIndex) continue;
-
-    const occupied = await tx.draftPick.findFirst({
-      where: { draftEventId, overallNumber: overall },
-      select: { id: true },
-    });
-    if (occupied) continue;
-
-    found += 1;
-    if (found === n) return overall;
-  }
-
-  throw new Error("Unable to find an open future pick slot for sibling placement.");
-}
-
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user) return jsonErr("Unauthorized", 401);
 
-  const role = (session.user as any).role as string | undefined;
   const userId = (session.user as any).id as string | undefined;
   const userEmail = (session.user as any).email as string | undefined;
 
-  if (role !== "COACH") return jsonErr("Forbidden", 403);
 
   let body: any = null;
   try {
@@ -105,6 +65,9 @@ export async function POST(req: Request) {
       const event = await getActiveDraftEvent(tx);
 
       if (!event) throw new Error("No draft event found.");
+      if (!event.division || !coachesDivision(session.user as any, event.division)) {
+        throw new Error("Your account is not assigned as a coach for this division.");
+      }
       if (event.phase !== "LIVE") throw new Error("Draft is not live.");
 
       const teams = await tx.draftTeam.findMany({
@@ -185,88 +148,17 @@ export async function POST(req: Request) {
         data: { isDrafted: true, draftedTeamId: onClockTeam.id, draftedAt: now },
       });
 
-      // ---------- SIBLING AUTO-PICK ----------
-      let siblingAutoPick: any = null;
-
-      const costRow = await tx.siblingDraftCost.findUnique({
-        where: { draftEventId_playerId: { draftEventId: event.id, playerId } },
-        select: { groupKey: true, draftCost: true },
+      // Immediately reserve every undrafted sibling according to that sibling's star rating.
+      const siblingAutoPicks = await reserveUndraftedSiblings({
+        tx,
+        draftEventId: event.id,
+        triggerPlayerId: playerId,
+        teamId: onClockTeam.id,
+        teamIndex: onClockIndex,
+        teams,
+        fromOverallExclusive: overall,
+        madeAt: now,
       });
-
-      const costN = parseDraftCost(costRow?.draftCost ?? null);
-
-      if (costRow?.groupKey && costN != null) {
-        const siblingsInGroup = await tx.siblingDraftCost.findMany({
-          where: {
-            draftEventId: event.id,
-            groupKey: costRow.groupKey,
-            playerId: { not: playerId },
-          },
-          select: { playerId: true },
-        });
-
-        if (siblingsInGroup.length > 0) {
-          const siblingCandidateIds = siblingsInGroup.map((s) => s.playerId);
-
-          const siblingPlayer = await tx.draftPlayer.findFirst({
-            where: {
-              draftEventId: event.id,
-              id: { in: siblingCandidateIds },
-              isDraftEligible: true,
-              isDrafted: false,
-            },
-            select: { id: true, fullName: true, rank: true },
-            orderBy: [{ rank: "asc" }, { fullName: "asc" }],
-          });
-
-          if (siblingPlayer) {
-            const targetOverall = await findNthUpcomingOpenPickOverallForTeam({
-              tx,
-              draftEventId: event.id,
-              fromOverallExclusive: overall,
-              teams,
-              teamIndex: onClockIndex,
-              n: costN,
-            });
-
-            const siblingSlot = await tx.draftPick.findFirst({
-              where: { draftEventId: event.id, overallNumber: targetOverall },
-              select: { id: true },
-            });
-
-            if (!siblingSlot) {
-              const { round: sibRound } = snakeTeamIndexFromOverallPick(targetOverall, teamCount);
-              const sibPickInRound = snakePickInRoundFromOverall(targetOverall, teamCount);
-
-              siblingAutoPick = await tx.draftPick.create({
-                data: {
-                  draftEventId: event.id,
-                  teamId: onClockTeam.id,
-                  playerId: siblingPlayer.id,
-                  overallNumber: targetOverall,
-                  round: sibRound,
-                  pickInRound: sibPickInRound,
-                  madeAt: now,
-                },
-                select: {
-                  id: true,
-                  overallNumber: true,
-                  round: true,
-                  pickInRound: true,
-                  madeAt: true,
-                  team: { select: { id: true, name: true, order: true } },
-                  player: { select: { id: true, fullName: true, rank: true } },
-                },
-              });
-
-              await tx.draftPlayer.update({
-                where: { id: siblingPlayer.id },
-                data: { isDrafted: true, draftedTeamId: onClockTeam.id, draftedAt: now },
-              });
-            }
-          }
-        }
-      }
 
       const nextOverallOpen = await findNextOpenOverall(tx, event.id, overall + 1);
 
@@ -281,7 +173,11 @@ export async function POST(req: Request) {
         data: updateData,
       });
 
-      return { pick, siblingAutoPick };
+      return {
+        pick,
+        siblingAutoPicks,
+        siblingAutoPick: siblingAutoPicks[0] ?? null,
+      };
     });
 
     return NextResponse.json(result);

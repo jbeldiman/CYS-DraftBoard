@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
-type AccountType = "U11_COACH" | "U13_COACH" | "BOARD";
+type AccountType = "U11_COACH" | "U13_COACH" | "BOARD" | "VIEWER";
 
 function normEmail(value: unknown) {
   return String(value ?? "").toLowerCase().trim();
@@ -16,7 +16,7 @@ function normString(value: unknown) {
 
 function normAccountType(value: unknown): AccountType | null {
   const raw = String(value ?? "").trim().toUpperCase();
-  if (raw === "U11_COACH" || raw === "U13_COACH" || raw === "BOARD") return raw;
+  if (raw === "U11_COACH" || raw === "U13_COACH" || raw === "BOARD" || raw === "VIEWER") return raw;
   return null;
 }
 
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
     await prisma.accessRequest.create({
       data: {
         userId: created.id,
-        type: isCoach ? "COACH" : "BOARD",
+        type: isCoach ? "COACH" : accountType === "VIEWER" ? "VIEWER" : "BOARD",
         requestedDivision: accountType === "U11_COACH" ? "U11" : accountType === "U13_COACH" ? "U13" : null,
         status: "PENDING",
       },

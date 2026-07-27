@@ -10,9 +10,10 @@ type Coach = {
   email: string;
   role: string;
   createdAt: string;
-  coachOrder: number;
-  coachDivision: Division | null;
-  isDraftCoach: boolean;
+  coachesU11: boolean;
+  coachesU13: boolean;
+  u11CoachOrder: number;
+  u13CoachOrder: number;
 };
 
 type Counts = {
@@ -73,8 +74,12 @@ export default function CoachManagementPanel({
   const coaches = useMemo(
     () =>
       allCoaches
-        .filter((coach) => coach.coachDivision === selectedDivision)
-        .sort((a, b) => a.coachOrder - b.coachOrder || a.createdAt.localeCompare(b.createdAt)),
+        .filter((coach) => (selectedDivision === "U11" ? coach.coachesU11 : coach.coachesU13))
+        .sort((a, b) => {
+          const aOrder = selectedDivision === "U11" ? a.u11CoachOrder : a.u13CoachOrder;
+          const bOrder = selectedDivision === "U11" ? b.u11CoachOrder : b.u13CoachOrder;
+          return aOrder - bOrder || a.createdAt.localeCompare(b.createdAt);
+        }),
     [allCoaches, selectedDivision]
   );
 
@@ -181,7 +186,7 @@ export default function CoachManagementPanel({
 
   async function removeCoach(coach: Coach) {
     const confirmed = window.confirm(
-      `Remove ${coach.name ?? coach.email} from the ${coach.coachDivision ?? "unassigned"} coach roster?\n\nThe account and historical records will be preserved.`
+      `Remove ${coach.name ?? coach.email} from the ${selectedDivision} coach roster?\n\nOther roles, the other division, and historical records will be preserved.`
     );
     if (!confirmed) return;
 
@@ -189,11 +194,14 @@ export default function CoachManagementPanel({
     setMessage(null);
     setBusy(coach.id);
     try {
-      const response = await fetch(`/api/admin/coaches/${encodeURIComponent(coach.id)}`, { method: "DELETE" });
+      const response = await fetch(
+        `/api/admin/coaches/${encodeURIComponent(coach.id)}?division=${selectedDivision}`,
+        { method: "DELETE" }
+      );
       const { message: apiError } = await apiMessage(response);
       if (!response.ok) throw new Error(apiError);
       await loadCoaches();
-      setMessage(`${coach.name ?? coach.email} removed from the active coach roster. History preserved.`);
+      setMessage(`${coach.name ?? coach.email} removed from ${selectedDivision}. Other access and history preserved.`);
     } catch (removeError: any) {
       setError(removeError?.message ?? "Failed to remove coach");
     } finally {
@@ -325,7 +333,7 @@ export default function CoachManagementPanel({
           <div className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Draft-night setup</div>
           <h2 className="mt-1 text-2xl font-black text-slate-950">Coach Rosters & Draft Order</h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            U11 and U13 coaches are completely separate. Saving an order only syncs teams when that division is the active draft.
+            U11 and U13 orders are separate, but the same person may coach in both divisions. Saving an order only syncs teams when that division is active.
           </p>
         </div>
         <button
@@ -480,6 +488,12 @@ export default function CoachManagementPanel({
                     {index + 1}. {coach.name ?? "Unnamed coach"}
                     {coach.role === "ADMIN" ? (
                       <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">Admin</span>
+                    ) : null}
+                    {coach.role === "BOARD" ? (
+                      <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-bold text-indigo-800">Board</span>
+                    ) : null}
+                    {coach.coachesU11 && coach.coachesU13 ? (
+                      <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-bold text-sky-800">Both divisions</span>
                     ) : null}
                   </div>
                   <div className="truncate text-sm text-slate-600">{coach.email}</div>
