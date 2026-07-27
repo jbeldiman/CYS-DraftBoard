@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "postinstall": "prisma generate",
-    "vercel-build": "prisma generate && next build --webpack"
+    "vercel-build": "prisma generate && next build --webpack",
+    "history:preview": "node scripts/migrate-history.mjs",
+    "history:migrate": "node scripts/migrate-history.mjs --apply"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
