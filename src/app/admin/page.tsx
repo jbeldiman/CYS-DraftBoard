@@ -527,6 +527,21 @@ export default function AdminPage() {
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <a
+            href="/api/draft/admin/export-results"
+            style={{
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #166534",
+              background: "#166534",
+              color: "white",
+              fontWeight: 900,
+              textDecoration: "none",
+            }}
+          >
+            Download Draft Results CSV
+          </a>
+
+          <a
             href="/admin/approvals"
             style={{
               padding: 10,
