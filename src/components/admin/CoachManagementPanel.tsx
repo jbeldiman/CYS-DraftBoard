@@ -49,9 +49,11 @@ async function apiMessage(response: Response) {
 
 export default function CoachManagementPanel({
   activeDivision,
+  refreshKey = 0,
   onTeamsChanged,
 }: {
   activeDivision: Division | null;
+  refreshKey?: number;
   onTeamsChanged?: () => Promise<void> | void;
 }) {
   const [allCoaches, setAllCoaches] = useState<Coach[]>([]);
@@ -86,7 +88,7 @@ export default function CoachManagementPanel({
 
   useEffect(() => {
     loadCoaches().catch((loadError) => setError(loadError?.message ?? "Failed to load coaches"));
-  }, []);
+  }, [refreshKey]);
 
   useEffect(() => {
     if (activeDivision) setSelectedDivision(activeDivision);

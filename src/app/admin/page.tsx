@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import CoachManagementPanel from "@/components/admin/CoachManagementPanel";
 import SeasonImportPanel from "@/components/admin/SeasonImportPanel";
+import UserManagementPanel from "@/components/admin/UserManagementPanel";
 
 type Division = "U11" | "U13";
 
@@ -27,6 +28,7 @@ export default function AdminPage() {
   const [pickClockSeconds, setPickClockSeconds] = useState(120);
   const [syncingTeams, setSyncingTeams] = useState(false);
   const [startingDraft, setStartingDraft] = useState(false);
+  const [coachRefreshKey, setCoachRefreshKey] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -182,7 +184,13 @@ export default function AdminPage() {
 
       <SeasonImportPanel onActiveEventChanged={loadDraftState} />
 
-      <CoachManagementPanel activeDivision={activeDivision} onTeamsChanged={loadDraftState} />
+      <UserManagementPanel onUserUpdated={() => setCoachRefreshKey((value) => value + 1)} />
+
+      <CoachManagementPanel
+        activeDivision={activeDivision}
+        refreshKey={coachRefreshKey}
+        onTeamsChanged={loadDraftState}
+      />
 
       <section className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
