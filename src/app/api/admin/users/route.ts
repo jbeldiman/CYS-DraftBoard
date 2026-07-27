@@ -2,23 +2,12 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
+import { coachesDivision, divisionCoachOrder } from "@/lib/coachAccess";
 
 export const runtime = "nodejs";
 
 function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
-}
-
-function accessLevel(user: {
-  role: string;
-  isDraftCoach: boolean;
-  coachDivision: "U11" | "U13" | null;
-}) {
-  if (user.role === "ADMIN") return "ADMIN";
-  if (user.role === "BOARD") return "BOARD";
-  if (user.isDraftCoach && user.coachDivision === "U11") return "U11_COACH";
-  if (user.isDraftCoach && user.coachDivision === "U13") return "U13_COACH";
-  return "PARENT";
 }
 
 export async function GET() {
@@ -37,24 +26,42 @@ export async function GET() {
         isDraftCoach: true,
         coachDivision: true,
         coachOrder: true,
+        coachesU11: true,
+        coachesU13: true,
+        isViewer: true,
+        u11CoachOrder: true,
+        u13CoachOrder: true,
         createdAt: true,
         updatedAt: true,
       },
     });
 
-    const mapped = users.map((user) => ({
-      ...user,
-      accessLevel: accessLevel(user),
-      isCurrentUser: user.id === currentUserId,
-    }));
+    const mapped = users.map((user) => {
+      const isAdminAccount = user.role === "ADMIN";
+      const isBoardMember = user.role === "BOARD";
+      const coachesU11 = coachesDivision(user, "U11");
+      const coachesU13 = coachesDivision(user, "U13");
+      return {
+        ...user,
+        isAdminAccount,
+        isBoardMember,
+        coachesU11,
+        coachesU13,
+        u11CoachOrder: divisionCoachOrder(user, "U11"),
+        u13CoachOrder: divisionCoachOrder(user, "U13"),
+        hasNoDraftAccess: !isAdminAccount && !isBoardMember && !coachesU11 && !coachesU13 && !user.isViewer,
+        isCurrentUser: user.id === currentUserId,
+      };
+    });
 
     const counts = {
       total: mapped.length,
-      ADMIN: mapped.filter((user) => user.accessLevel === "ADMIN").length,
-      BOARD: mapped.filter((user) => user.accessLevel === "BOARD").length,
-      U11_COACH: mapped.filter((user) => user.accessLevel === "U11_COACH").length,
-      U13_COACH: mapped.filter((user) => user.accessLevel === "U13_COACH").length,
-      PARENT: mapped.filter((user) => user.accessLevel === "PARENT").length,
+      ADMIN: mapped.filter((user) => user.isAdminAccount).length,
+      BOARD: mapped.filter((user) => user.isBoardMember).length,
+      U11_COACH: mapped.filter((user) => user.coachesU11).length,
+      U13_COACH: mapped.filter((user) => user.coachesU13).length,
+      VIEWER: mapped.filter((user) => user.isViewer).length,
+      PARENT: mapped.filter((user) => user.hasNoDraftAccess).length,
     };
 
     return NextResponse.json({ users: mapped, counts });

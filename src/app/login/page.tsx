@@ -5,7 +5,7 @@ import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type Mode = "signin" | "signup";
-type AccountType = "U11_COACH" | "U13_COACH" | "BOARD";
+type AccountType = "U11_COACH" | "U13_COACH" | "BOARD" | "VIEWER";
 
 function cleanNext(next: string | null) {
   if (!next) return "/";
@@ -166,6 +166,7 @@ export default function LoginPage() {
                   <option value="U11_COACH">U11 Coach</option>
                   <option value="U13_COACH">U13 Coach</option>
                   <option value="BOARD">CYS Board</option>
+                  <option value="VIEWER">Viewer</option>
                 </select>
               </div>
 
@@ -222,6 +223,8 @@ export default function LoginPage() {
               ? "Sign in with your approved CYS account."
               : accountType === "BOARD"
               ? "CYS Board access requires Admin approval."
+              : accountType === "VIEWER"
+              ? "Viewer access requires Admin approval."
               : `${accountType === "U11_COACH" ? "U11" : "U13"} Coach access requires Admin approval.`}
           </div>
         </form>

@@ -38,12 +38,12 @@ export async function POST() {
     }
 
     const coaches = await prisma.user.findMany({
-      where: {
-        isDraftCoach: true,
-        coachDivision: event.division,
-      },
-      orderBy: [{ coachOrder: "asc" }, { createdAt: "asc" }],
-      select: { id: true, name: true, email: true, coachOrder: true },
+      where: event.division === "U11" ? { coachesU11: true } : { coachesU13: true },
+      orderBy:
+        event.division === "U11"
+          ? [{ u11CoachOrder: "asc" }, { createdAt: "asc" }]
+          : [{ u13CoachOrder: "asc" }, { createdAt: "asc" }],
+      select: { id: true, name: true, email: true },
     });
 
     await prisma.$transaction(async (tx) => {

@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
+import { legacyCoachFields, type CoachDivision } from "@/lib/coachAccess";
 
 export const runtime = "nodejs";
 
-type Division = "U11" | "U13";
+type Division = CoachDivision;
 
 function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
@@ -32,8 +33,14 @@ export async function POST(req: Request) {
     }
 
     const divisionCoaches = await prisma.user.findMany({
-      where: { isDraftCoach: true, coachDivision: division },
-      select: { id: true },
+      where: division === "U11" ? { coachesU11: true } : { coachesU13: true },
+      select: {
+        id: true,
+        coachesU11: true,
+        coachesU13: true,
+        u11CoachOrder: true,
+        u13CoachOrder: true,
+      },
     });
     const expected = new Set(divisionCoaches.map((coach) => coach.id));
 
@@ -44,10 +51,25 @@ export async function POST(req: Request) {
       );
     }
 
+    const byId = new Map(divisionCoaches.map((coach) => [coach.id, coach]));
     await prisma.$transaction(
-      coachIds.map((id: string, index: number) =>
-        prisma.user.update({ where: { id }, data: { coachOrder: index + 1 } })
-      )
+      coachIds.map((id: string, index: number) => {
+        const coach = byId.get(id)!;
+        const u11CoachOrder = division === "U11" ? index + 1 : coach.u11CoachOrder;
+        const u13CoachOrder = division === "U13" ? index + 1 : coach.u13CoachOrder;
+        return prisma.user.update({
+          where: { id },
+          data: {
+            ...(division === "U11" ? { u11CoachOrder } : { u13CoachOrder }),
+            ...legacyCoachFields({
+              coachesU11: coach.coachesU11,
+              coachesU13: coach.coachesU13,
+              u11CoachOrder,
+              u13CoachOrder,
+            }),
+          },
+        });
+      })
     );
 
     return NextResponse.json({ ok: true, division, updated: coachIds.length });

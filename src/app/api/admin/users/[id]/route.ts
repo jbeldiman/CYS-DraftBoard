@@ -3,39 +3,70 @@ import { getServerSession } from "next-auth";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
+import { coachesDivision, divisionCoachOrder, legacyCoachFields, type CoachDivision } from "@/lib/coachAccess";
 
 export const runtime = "nodejs";
 
-type Division = "U11" | "U13";
-type AccessLevel = "ADMIN" | "BOARD" | "U11_COACH" | "U13_COACH" | "PARENT";
-
 function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
-}
-
-function asAccessLevel(value: unknown): AccessLevel | null {
-  const normalized = String(value ?? "").trim().toUpperCase();
-  return ["ADMIN", "BOARD", "U11_COACH", "U13_COACH", "PARENT"].includes(normalized)
-    ? (normalized as AccessLevel)
-    : null;
 }
 
 function isValidEmail(value: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
-async function resequenceDivision(tx: any, division: Division) {
+function asBoolean(value: unknown) {
+  return value === true || String(value ?? "").trim().toLowerCase() === "true";
+}
+
+async function nextOrder(tx: any, division: CoachDivision, excludedUserId: string) {
+  if (division === "U11") {
+    const result = await tx.user.aggregate({
+      where: { coachesU11: true, id: { not: excludedUserId } },
+      _max: { u11CoachOrder: true },
+    });
+    return (result._max.u11CoachOrder ?? 0) + 1;
+  }
+  const result = await tx.user.aggregate({
+    where: { coachesU13: true, id: { not: excludedUserId } },
+    _max: { u13CoachOrder: true },
+  });
+  return (result._max.u13CoachOrder ?? 0) + 1;
+}
+
+async function resequenceDivision(tx: any, division: CoachDivision) {
   const coaches = await tx.user.findMany({
-    where: { isDraftCoach: true, coachDivision: division },
-    orderBy: [{ coachOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true },
+    where: division === "U11" ? { coachesU11: true } : { coachesU13: true },
+    orderBy:
+      division === "U11"
+        ? [{ u11CoachOrder: "asc" }, { createdAt: "asc" }]
+        : [{ u13CoachOrder: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      coachesU11: true,
+      coachesU13: true,
+      u11CoachOrder: true,
+      u13CoachOrder: true,
+    },
   });
 
-  await Promise.all(
-    coaches.map((coach: { id: string }, index: number) =>
-      tx.user.update({ where: { id: coach.id }, data: { coachOrder: index + 1 } })
-    )
-  );
+  for (let index = 0; index < coaches.length; index += 1) {
+    const coach = coaches[index];
+    const nextU11Order = division === "U11" ? index + 1 : coach.u11CoachOrder;
+    const nextU13Order = division === "U13" ? index + 1 : coach.u13CoachOrder;
+    await tx.user.update({
+      where: { id: coach.id },
+      data: {
+        ...(division === "U11" ? { u11CoachOrder: nextU11Order } : { u13CoachOrder: nextU13Order }),
+        ...legacyCoachFields({
+          coachesU11: coach.coachesU11,
+          coachesU13: coach.coachesU13,
+          u11CoachOrder: nextU11Order,
+          u13CoachOrder: nextU13Order,
+        }),
+      },
+    });
+  }
 }
 
 export async function PATCH(
@@ -54,13 +85,15 @@ export async function PATCH(
     const name = String(body?.name ?? "").trim();
     const email = String(body?.email ?? "").trim().toLowerCase();
     const password = String(body?.password ?? "");
-    const requestedAccess = asAccessLevel(body?.accessLevel);
+    const requestedBoard = asBoolean(body?.isBoardMember);
+    const requestedU11 = asBoolean(body?.coachesU11);
+    const requestedU13 = asBoolean(body?.coachesU13);
+    const requestedViewer = asBoolean(body?.isViewer);
 
     if (!name) return NextResponse.json({ error: "Name is required" }, { status: 400 });
     if (!email || !isValidEmail(email)) {
       return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
     }
-    if (!requestedAccess) return NextResponse.json({ error: "Select a valid access level" }, { status: 400 });
     if (password && password.length < 8) {
       return NextResponse.json({ error: "Temporary password must be at least 8 characters" }, { status: 400 });
     }
@@ -74,19 +107,14 @@ export async function PATCH(
         isDraftCoach: true,
         coachDivision: true,
         coachOrder: true,
+        coachesU11: true,
+        coachesU13: true,
+        u11CoachOrder: true,
+        u13CoachOrder: true,
+        isViewer: true,
       },
     });
     if (!target) return NextResponse.json({ error: "User not found" }, { status: 404 });
-
-    if (target.role === "ADMIN" && requestedAccess !== "ADMIN") {
-      return NextResponse.json(
-        { error: "The Admin account is protected. Its role cannot be changed here." },
-        { status: 400 }
-      );
-    }
-    if (target.role !== "ADMIN" && requestedAccess === "ADMIN") {
-      return NextResponse.json({ error: "Additional Admin accounts cannot be assigned here." }, { status: 400 });
-    }
 
     const duplicate = await prisma.user.findFirst({
       where: { email, id: { not: id } },
@@ -96,41 +124,41 @@ export async function PATCH(
       return NextResponse.json({ error: "Another account already uses that email address" }, { status: 409 });
     }
 
+    const oldU11 = coachesDivision(target, "U11");
+    const oldU13 = coachesDivision(target, "U13");
+
     const updated = await prisma.$transaction(async (tx) => {
-      const data: any = { name, email };
+      let u11CoachOrder = requestedU11 ? divisionCoachOrder(target, "U11") : 0;
+      let u13CoachOrder = requestedU13 ? divisionCoachOrder(target, "U13") : 0;
+      if (requestedU11 && u11CoachOrder <= 0) u11CoachOrder = await nextOrder(tx, "U11", id);
+      if (requestedU13 && u13CoachOrder <= 0) u13CoachOrder = await nextOrder(tx, "U13", id);
+
+      const role =
+        target.role === "ADMIN"
+          ? "ADMIN"
+          : requestedBoard
+            ? "BOARD"
+            : requestedU11 || requestedU13
+              ? "COACH"
+              : "PARENT";
+
+      const data: any = {
+        name,
+        email,
+        role,
+        coachesU11: requestedU11,
+        coachesU13: requestedU13,
+        u11CoachOrder,
+        u13CoachOrder,
+        isViewer: requestedViewer,
+        ...legacyCoachFields({
+          coachesU11: requestedU11,
+          coachesU13: requestedU13,
+          u11CoachOrder,
+          u13CoachOrder,
+        }),
+      };
       if (password) data.passwordHash = await bcrypt.hash(password, 10);
-
-      if (target.role === "ADMIN") {
-        data.role = "ADMIN";
-      } else if (requestedAccess === "BOARD") {
-        data.role = "BOARD";
-        data.isDraftCoach = false;
-        data.coachDivision = null;
-        data.coachOrder = 0;
-      } else if (requestedAccess === "PARENT") {
-        data.role = "PARENT";
-        data.isDraftCoach = false;
-        data.coachDivision = null;
-        data.coachOrder = 0;
-      } else {
-        const division: Division = requestedAccess === "U11_COACH" ? "U11" : "U13";
-        const keepingOrder =
-          target.isDraftCoach && target.coachDivision === division && target.coachOrder > 0;
-
-        let coachOrder = target.coachOrder;
-        if (!keepingOrder) {
-          const result = await tx.user.aggregate({
-            where: { isDraftCoach: true, coachDivision: division, id: { not: id } },
-            _max: { coachOrder: true },
-          });
-          coachOrder = (result._max.coachOrder ?? 0) + 1;
-        }
-
-        data.role = "COACH";
-        data.isDraftCoach = true;
-        data.coachDivision = division;
-        data.coachOrder = coachOrder;
-      }
 
       const user = await tx.user.update({
         where: { id },
@@ -143,15 +171,18 @@ export async function PATCH(
           isDraftCoach: true,
           coachDivision: true,
           coachOrder: true,
+          coachesU11: true,
+          coachesU13: true,
+          u11CoachOrder: true,
+          u13CoachOrder: true,
+          isViewer: true,
           createdAt: true,
           updatedAt: true,
         },
       });
 
-      const newDivision = user.isDraftCoach ? (user.coachDivision as Division | null) : null;
-      const oldDivision = target.isDraftCoach ? (target.coachDivision as Division | null) : null;
-      if (oldDivision && oldDivision !== newDivision) await resequenceDivision(tx, oldDivision);
-
+      if (oldU11 && !requestedU11) await resequenceDivision(tx, "U11");
+      if (oldU13 && !requestedU13) await resequenceDivision(tx, "U13");
       return user;
     });
 
@@ -159,16 +190,14 @@ export async function PATCH(
       ok: true,
       user: {
         ...updated,
-        accessLevel:
-          updated.role === "ADMIN"
-            ? "ADMIN"
-            : updated.role === "BOARD"
-              ? "BOARD"
-              : updated.isDraftCoach && updated.coachDivision === "U11"
-                ? "U11_COACH"
-                : updated.isDraftCoach && updated.coachDivision === "U13"
-                  ? "U13_COACH"
-                  : "PARENT",
+        isAdminAccount: updated.role === "ADMIN",
+        isBoardMember: updated.role === "BOARD",
+        hasNoDraftAccess:
+          updated.role !== "ADMIN" &&
+          updated.role !== "BOARD" &&
+          !updated.coachesU11 &&
+          !updated.coachesU13 &&
+          !updated.isViewer,
       },
       passwordReset: !!password,
       message: `${updated.name ?? updated.email ?? "User"} was updated. They should sign out and back in to refresh access.`,

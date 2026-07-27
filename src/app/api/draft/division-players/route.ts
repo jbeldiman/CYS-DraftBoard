@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { prisma } from "@/lib/prisma";
+import { coachesDivision } from "@/lib/coachAccess";
 
 export const runtime = "nodejs";
 
@@ -36,9 +37,10 @@ function ratingFor(entry: {
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
   const role = String((session?.user as any)?.role ?? "");
+  const isViewer = !!(session?.user as any)?.isViewer;
 
-  if (!session?.user || !["ADMIN", "BOARD", "COACH"].includes(role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!session?.user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const url = new URL(req.url);
@@ -47,12 +49,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "division must be U11 or U13" }, { status: 400 });
   }
 
-  if (role === "COACH") {
-    const isDraftCoach = !!(session.user as any)?.isDraftCoach;
-    const coachDivision = String((session.user as any)?.coachDivision ?? "");
-    if (!isDraftCoach || coachDivision !== division) {
-      return NextResponse.json({ error: `Your account is not approved for the ${division} player pool.` }, { status: 403 });
-    }
+  const hasAllDivisionAccess = role === "ADMIN" || role === "BOARD" || isViewer;
+  if (!hasAllDivisionAccess && !coachesDivision(session.user as any, division)) {
+    return NextResponse.json(
+      { error: `Your account is not approved for the ${division} player pool.` },
+      { status: 403 }
+    );
   }
 
   const event = await prisma.draftEvent.findFirst({
