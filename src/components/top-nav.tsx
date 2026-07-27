@@ -11,6 +11,8 @@ type NavSession = {
     email?: string | null;
     name?: string | null;
     role?: string | null;
+    isDraftCoach?: boolean | null;
+    coachDivision?: "U11" | "U13" | null;
   };
 };
 
@@ -18,17 +20,19 @@ function cx(...v: Array<string | false | null | undefined>) {
   return v.filter(Boolean).join(" ");
 }
 
-function RoleBadge({ role }: { role: string }) {
+function RoleBadge({
+  role,
+  isDraftCoach,
+  coachDivision,
+}: {
+  role: string;
+  isDraftCoach: boolean;
+  coachDivision: string;
+}) {
   if (!role) return null;
 
-  const label =
-    role === "ADMIN"
-      ? "Admin"
-      : role === "BOARD"
-      ? "Board"
-      : role === "COACH"
-      ? "Coach"
-      : "Parent";
+  const roleLabel = role === "ADMIN" ? "Admin" : role === "BOARD" ? "Board" : role === "COACH" ? "Coach" : "Account";
+  const label = isDraftCoach && coachDivision ? `${roleLabel} · ${coachDivision} Coach` : roleLabel;
 
   return (
     <span className="inline-flex items-center gap-1 rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground shadow-sm">
@@ -43,12 +47,27 @@ export default function TopNav({ session }: { session: NavSession | null }) {
   const authed = !!session?.user?.id;
   const role = (session?.user?.role ?? "").toString();
   const isAdmin = role === "ADMIN";
+  const isBoard = role === "BOARD";
+  const isDraftCoach = !!session?.user?.isDraftCoach;
+  const coachDivision = (session?.user?.coachDivision ?? "").toString();
+
+  const playerPoolLinks =
+    isAdmin || isBoard
+      ? [
+          { href: "/players/u11", label: "U11 Pool" },
+          { href: "/players/u13", label: "U13 Pool" },
+        ]
+      : isDraftCoach && coachDivision === "U11"
+      ? [{ href: "/players/u11", label: "U11 Pool" }]
+      : isDraftCoach && coachDivision === "U13"
+      ? [{ href: "/players/u13", label: "U13 Pool" }]
+      : [];
 
   const baseLinks: { href: string; label: string }[] = [
     { href: "/", label: "Home" },
     { href: "/draft", label: "Draft Board" },
     { href: "/live-draft", label: "Live Draft" },
-    { href: "/players", label: "Eligible Players" },
+    ...playerPoolLinks,
     { href: "/rosters", label: "My Roster" },
     ...(role !== "PARENT" ? [{ href: "/trade", label: "Trade Hub" }] : []),
     { href: "/siblings", label: "Siblings" },
@@ -75,7 +94,7 @@ export default function TopNav({ session }: { session: NavSession | null }) {
 
             <nav className="hidden md:flex items-center gap-1">
               {links.map((l) => {
-                const active = pathname === l.href;
+                const active = pathname === l.href || pathname.startsWith(`${l.href}/`);
                 const locked = !authed && l.href !== "/";
                 return (
                   <Link
@@ -98,7 +117,7 @@ export default function TopNav({ session }: { session: NavSession | null }) {
           </div>
 
           <div className="flex items-center gap-2">
-            <RoleBadge role={role} />
+            <RoleBadge role={role} isDraftCoach={isDraftCoach} coachDivision={coachDivision} />
             <UserActions authed={authed} email={session?.user?.email ?? null} role={session?.user?.role ?? null} />
           </div>
         </div>
@@ -107,7 +126,7 @@ export default function TopNav({ session }: { session: NavSession | null }) {
         <div className="md:hidden -mx-4 px-4 pb-2">
           <div className="flex gap-2 overflow-x-auto scrollbar-none">
             {links.map((l) => {
-              const active = pathname === l.href;
+              const active = pathname === l.href || pathname.startsWith(`${l.href}/`);
               const locked = !authed && l.href !== "/";
               return (
                 <Link

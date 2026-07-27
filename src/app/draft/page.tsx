@@ -209,6 +209,8 @@ function rankToStars(rank: number | null): number | null {
 function extractRating(p: any): number | null {
   const candidates = [
     p?.rating,
+    p?.currentRating,
+    p?.spring2026Rating,
     p?.boardRating,
     p?.playerRating,
     p?.ratingValue,

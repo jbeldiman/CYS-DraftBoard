@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getActiveDraftEvent, getOrCreateActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -16,22 +17,15 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const reset = !!body?.reset;
 
-  const existing = await prisma.draftEvent.findFirst({ orderBy: { createdAt: "desc" } });
+  const existing = await getActiveDraftEvent();
 
   if (!existing) {
-    const created = await prisma.draftEvent.create({
-      data: {
-        name: "CYS Draft Night",
-        scheduledAt: new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-        phase: "SETUP",
-        currentPick: 1,
-        pickClockSeconds: 120,
-        isPaused: true,
-      },
-      select: { id: true, name: true, scheduledAt: true },
+    const created = await getOrCreateActiveDraftEvent();
+    return NextResponse.json({
+      event: { id: created.id, name: created.name, scheduledAt: created.scheduledAt },
+      created: true,
+      reset: false,
     });
-
-    return NextResponse.json({ event: created, created: true, reset: false });
   }
 
   if (!reset) {
@@ -42,10 +36,17 @@ export async function POST(req: Request) {
     });
   }
 
+  if (existing.phase === "ARCHIVED") {
+    return NextResponse.json({ error: "Archived drafts cannot be restarted." }, { status: 409 });
+  }
+
   await prisma.$transaction([
+    prisma.trade.deleteMany({ where: { draftEventId: existing.id } }),
     prisma.draftPick.deleteMany({ where: { draftEventId: existing.id } }),
-    prisma.draftPlayer.deleteMany({ where: { draftEventId: existing.id } }),
-    prisma.draftTeam.deleteMany({ where: { draftEventId: existing.id } }),
+    prisma.draftPlayer.updateMany({
+      where: { draftEventId: existing.id },
+      data: { isDrafted: false, draftedTeamId: null, draftedAt: null },
+    }),
     prisma.draftEvent.update({
       where: { id: existing.id },
       data: {

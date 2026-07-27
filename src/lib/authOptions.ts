@@ -62,7 +62,14 @@ export const authOptions: NextAuthOptions = {
               },
             });
 
-            return { id: created.id, email: created.email, name: created.name, role: created.role } as any;
+            return {
+              id: created.id,
+              email: created.email,
+              name: created.name,
+              role: created.role,
+              isDraftCoach: created.isDraftCoach,
+              coachDivision: created.coachDivision,
+            } as any;
           }
 
           const storedHash = (existing as any).passwordHash ? String((existing as any).passwordHash) : "";
@@ -76,10 +83,24 @@ export const authOptions: NextAuthOptions = {
               where: { id: existing.id },
               data: { role: "ADMIN" },
             });
-            return { id: updated.id, email: updated.email, name: updated.name, role: updated.role } as any;
+            return {
+              id: updated.id,
+              email: updated.email,
+              name: updated.name,
+              role: updated.role,
+              isDraftCoach: updated.isDraftCoach,
+              coachDivision: updated.coachDivision,
+            } as any;
           }
 
-          return { id: existing.id, email: existing.email, name: existing.name, role: existing.role } as any;
+          return {
+            id: existing.id,
+            email: existing.email,
+            name: existing.name,
+            role: existing.role,
+            isDraftCoach: existing.isDraftCoach,
+            coachDivision: existing.coachDivision,
+          } as any;
         }
 
         const user = await prisma.user.findUnique({
@@ -96,6 +117,8 @@ export const authOptions: NextAuthOptions = {
           email: user.email,
           name: user.name,
           role: user.role,
+          isDraftCoach: user.isDraftCoach,
+          coachDivision: user.coachDivision,
         } as any;
       },
     }),
@@ -106,13 +129,20 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         (token as any).id = (user as any).id;
         (token as any).role = (user as any).role;
-      } else if ((!(token as any).id || !(token as any).role) && (token as any).email) {
+        (token as any).isDraftCoach = !!(user as any).isDraftCoach;
+        (token as any).coachDivision = (user as any).coachDivision ?? null;
+      } else if ((token as any).email) {
         const email = normEmail((token as any).email);
         if (email) {
-          const dbUser = await prisma.user.findUnique({ where: { email }, select: { id: true, role: true } });
+          const dbUser = await prisma.user.findUnique({
+            where: { email },
+            select: { id: true, role: true, isDraftCoach: true, coachDivision: true },
+          });
           if (dbUser) {
             (token as any).id = dbUser.id;
             (token as any).role = dbUser.role;
+            (token as any).isDraftCoach = dbUser.isDraftCoach;
+            (token as any).coachDivision = dbUser.coachDivision;
           }
         }
       }
@@ -122,6 +152,8 @@ export const authOptions: NextAuthOptions = {
     async session({ session, token }) {
       (session.user as any).id = (token as any).id;
       (session.user as any).role = (token as any).role;
+      (session.user as any).isDraftCoach = !!(token as any).isDraftCoach;
+      (session.user as any).coachDivision = (token as any).coachDivision ?? null;
       return session;
     },
   },

@@ -1,6 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getActiveDraftEventId } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -12,18 +13,7 @@ function avg(nums: number[]): number | null {
 }
 
 async function latestEventId() {
-  const live = await prisma.draftEvent.findFirst({
-    where: { phase: "LIVE" },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true },
-  });
-  if (live?.id) return live.id;
-
-  const e = await prisma.draftEvent.findFirst({
-    orderBy: { updatedAt: "desc" },
-    select: { id: true },
-  });
-  return e?.id ?? null;
+  return getActiveDraftEventId();
 }
 
 export async function POST(req: NextRequest) {
@@ -43,7 +33,7 @@ export async function POST(req: NextRequest) {
           givePlayerIds?: string[];
           receivePlayerIds?: string[];
           message?: string | null;
-          fromTeamId?: string; 
+          fromTeamId?: string;
         }
       | null;
 
@@ -62,7 +52,7 @@ export async function POST(req: NextRequest) {
     const draftEventId = await latestEventId();
     if (!draftEventId) return NextResponse.json({ error: "No draft event found" }, { status: 400 });
 
-   
+
     let fromTeamId: string | null = null;
 
     if (role === "COACH") {
@@ -75,7 +65,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "No team assigned to this coach yet" }, { status: 400 });
       }
     } else {
-      
+
       const fromTeamIdFromBody = String(body?.fromTeamId ?? "");
       if (fromTeamIdFromBody) {
         fromTeamId = fromTeamIdFromBody;
@@ -98,7 +88,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Cannot trade with your own team" }, { status: 400 });
     }
 
- 
+
     const teams = await prisma.draftTeam.findMany({
       where: { draftEventId, id: { in: [fromTeamId, toTeamId] } },
       select: { id: true },
@@ -107,7 +97,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "One or both teams are invalid for this draft event" }, { status: 400 });
     }
 
-   
+
     const giveCount = await prisma.draftPlayer.count({
       where: {
         draftEventId,
@@ -138,7 +128,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    
+
     const picks = await prisma.draftPick.findMany({
       where: {
         draftEventId,

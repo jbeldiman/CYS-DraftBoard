@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getOrCreateActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -10,19 +11,7 @@ function isAdmin(session: any) {
 }
 
 async function latestEventOrCreate() {
-  const e = await prisma.draftEvent.findFirst({ orderBy: { createdAt: "desc" } });
-  if (e) return e;
-
-  return prisma.draftEvent.create({
-    data: {
-      name: "CYS Draft Night",
-      scheduledAt: new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-      phase: "SETUP",
-      currentPick: 1,
-      pickClockSeconds: 120,
-      isPaused: true,
-    },
-  });
+  return getOrCreateActiveDraftEvent();
 }
 
 export async function POST() {
@@ -32,37 +21,23 @@ export async function POST() {
 
     const e = await latestEventOrCreate();
 
-    const updated = await prisma.$transaction(async (tx) => {
-      await tx.draftPick.deleteMany({ where: { draftEventId: e.id } });
-
-      await tx.draftPlayer.updateMany({
-        where: { draftEventId: e.id },
-        data: {
-          isDrafted: false,
-          draftedTeamId: null,
-          draftedAt: null,
-        },
-      });
-
-      return tx.draftEvent.update({
-        where: { id: e.id },
-        data: {
-          phase: "SETUP",
-          currentPick: 1,
-          isPaused: true,
-          clockEndsAt: null,
-          pauseRemainingSecs: null,
-        },
-        select: {
-          id: true,
-          phase: true,
-          currentPick: true,
-          pickClockSeconds: true,
-          isPaused: true,
-          clockEndsAt: true,
-          pauseRemainingSecs: true,
-        },
-      });
+    const updated = await prisma.draftEvent.update({
+      where: { id: e.id },
+      data: {
+        phase: "SETUP",
+        isPaused: true,
+        clockEndsAt: null,
+        pauseRemainingSecs: null,
+      },
+      select: {
+        id: true,
+        phase: true,
+        currentPick: true,
+        pickClockSeconds: true,
+        isPaused: true,
+        clockEndsAt: true,
+        pauseRemainingSecs: true,
+      },
     });
 
     return NextResponse.json({ event: updated });

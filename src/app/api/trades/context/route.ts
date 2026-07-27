@@ -1,40 +1,13 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getOrCreateActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
 
 async function latestEventId() {
-  const live = await prisma.draftEvent.findFirst({
-    where: { phase: "LIVE" },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true },
-  });
-
-  if (live?.id) return live.id;
-
-  const e = await prisma.draftEvent.findFirst({
-    orderBy: { updatedAt: "desc" },
-    select: { id: true },
-  });
-
-  if (!e?.id) {
-    const created = await prisma.draftEvent.create({
-      data: {
-        name: "CYS Draft Night",
-        scheduledAt: new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-        phase: "SETUP",
-        currentPick: 1,
-        pickClockSeconds: 120,
-        isPaused: true,
-      },
-      select: { id: true },
-    });
-    return created.id;
-  }
-
-  return e.id;
+  return (await getOrCreateActiveDraftEvent()).id;
 }
 
 async function rosterWithRounds(draftEventId: string, teamId: string) {

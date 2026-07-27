@@ -5,7 +5,7 @@ import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 type Mode = "signin" | "signup";
-type AccountType = "PARENT" | "COACH" | "BOARD";
+type AccountType = "U11_COACH" | "U13_COACH" | "BOARD";
 
 function cleanNext(next: string | null) {
   if (!next) return "/";
@@ -26,7 +26,7 @@ export default function LoginPage() {
   const nextUrl = useMemo(() => cleanNext(params.get("next")), [params]);
 
   const [mode, setMode] = useState<Mode>(initialMode);
-  const [accountType, setAccountType] = useState<AccountType>("PARENT");
+  const [accountType, setAccountType] = useState<AccountType>("U11_COACH");
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -113,7 +113,7 @@ export default function LoginPage() {
     if (!e || !password) return false;
     if (mode === "signup") {
       if (password.length < 8) return false;
-      if ((accountType === "COACH" || accountType === "BOARD") && !name.trim()) return false;
+      if (!name.trim()) return false;
     }
     return true;
   }, [mode, email, password, name, accountType]);
@@ -163,14 +163,13 @@ export default function LoginPage() {
                   onChange={(e) => setAccountType(e.target.value as AccountType)}
                   disabled={busy}
                 >
-                  <option value="PARENT">Parent</option>
-                  <option value="COACH">Coach</option>
-                  <option value="BOARD">Board</option>
+                  <option value="U11_COACH">U11 Coach</option>
+                  <option value="U13_COACH">U13 Coach</option>
+                  <option value="BOARD">CYS Board</option>
                 </select>
               </div>
 
-              {(accountType === "COACH" || accountType === "BOARD") ? (
-                <div>
+              <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Full name</label>
                   <input
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -181,7 +180,6 @@ export default function LoginPage() {
                     autoComplete="name"
                   />
                 </div>
-              ) : null}
             </>
           ) : null}
 
@@ -221,10 +219,10 @@ export default function LoginPage() {
 
           <div className="text-xs text-gray-500 text-center">
             {mode === "signin"
-              ? "After signing in, you will be routed to the home page."
-              : accountType === "PARENT"
-              ? "Parents can create accounts and sign in immediately."
-              : "Coach/Board accounts will require approval before sign in."}
+              ? "Sign in with your approved CYS account."
+              : accountType === "BOARD"
+              ? "CYS Board access requires Admin approval."
+              : `${accountType === "U11_COACH" ? "U11" : "U13"} Coach access requires Admin approval.`}
           </div>
         </form>
       </div>

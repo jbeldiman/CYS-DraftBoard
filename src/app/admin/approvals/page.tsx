@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 type AccessRequest = {
   id: string;
   type: "COACH" | "BOARD";
+  requestedDivision: "U11" | "U13" | null;
   status: "PENDING" | "APPROVED" | "DENIED";
   requestedAt: string;
   user: {
@@ -95,7 +96,7 @@ export default function ApprovalsPage() {
         <div className="flex items-start justify-between gap-3 mb-6">
           <div>
             <h1 className="text-xl font-semibold text-gray-900">Approvals</h1>
-            <p className="text-sm text-gray-600">Approve or deny Board/Coach account requests.</p>
+            <p className="text-sm text-gray-600">Approve CYS Board, U11 Coach, and U13 Coach account requests.</p>
           </div>
           <button
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium hover:bg-gray-50"
@@ -125,7 +126,7 @@ export default function ApprovalsPage() {
             <table className="min-w-[900px] w-full border-collapse">
               <thead>
                 <tr className="border-b">
-                  <th className="text-left text-sm font-semibold text-gray-700 py-2 pr-3">Type</th>
+                  <th className="text-left text-sm font-semibold text-gray-700 py-2 pr-3">Access</th>
                   <th className="text-left text-sm font-semibold text-gray-700 py-2 pr-3">Name</th>
                   <th className="text-left text-sm font-semibold text-gray-700 py-2 pr-3">Email</th>
                   <th className="text-left text-sm font-semibold text-gray-700 py-2 pr-3">Requested</th>
@@ -135,7 +136,11 @@ export default function ApprovalsPage() {
               <tbody>
                 {pending.map((r) => (
                   <tr key={r.id} className="border-b">
-                    <td className="py-3 pr-3 text-sm text-gray-900">{r.type}</td>
+                    <td className="py-3 pr-3 text-sm text-gray-900">
+                      <span className="inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold">
+                        {r.type === "BOARD" ? "CYS Board" : `${r.requestedDivision ?? "Unassigned"} Coach`}
+                      </span>
+                    </td>
                     <td className="py-3 pr-3 text-sm text-gray-900">{r.user.name ?? "—"}</td>
                     <td className="py-3 pr-3 text-sm text-gray-900">{r.user.email}</td>
                     <td className="py-3 pr-3 text-sm text-gray-600">

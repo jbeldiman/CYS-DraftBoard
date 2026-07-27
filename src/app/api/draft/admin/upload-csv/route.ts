@@ -1,7 +1,16 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
+import { prisma } from "@/lib/prisma";
+import {
+  normalizeDisplayName,
+  normalizePlayerName,
+  parseDateOnlyToUTCNoon,
+  permanentPlayerIdentityKey,
+  splitPlayerName,
+  utcDateKey,
+} from "@/lib/playerIdentity";
 
 export const runtime = "nodejs";
 
@@ -9,413 +18,494 @@ function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
 }
 
-const DOB_MIN = new Date("2012-12-01T00:00:00.000Z");
-const DOB_MAX = new Date("2016-12-31T23:59:59.999Z");
-
 function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
-  let i = 0;
   let inQuotes = false;
 
   const pushField = () => {
     row.push(field);
     field = "";
   };
-
   const pushRow = () => {
     rows.push(row);
     row = [];
   };
 
-  while (i < text.length) {
-    const c = text[i];
-
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
     if (inQuotes) {
-      if (c === '"') {
-        const next = text[i + 1];
-        if (next === '"') {
+      if (char === '"') {
+        if (text[index + 1] === '"') {
           field += '"';
-          i += 2;
-          continue;
+          index += 1;
         } else {
           inQuotes = false;
-          i += 1;
-          continue;
         }
       } else {
-        field += c;
-        i += 1;
-        continue;
+        field += char;
       }
-    } else {
-      if (c === '"') {
-        inQuotes = true;
-        i += 1;
-        continue;
-      }
-      if (c === ",") {
-        pushField();
-        i += 1;
-        continue;
-      }
-      if (c === "\r") {
-        i += 1;
-        continue;
-      }
-      if (c === "\n") {
-        pushField();
-        pushRow();
-        i += 1;
-        continue;
-      }
-      field += c;
-      i += 1;
+      continue;
     }
+
+    if (char === '"') inQuotes = true;
+    else if (char === ",") pushField();
+    else if (char === "\n") {
+      pushField();
+      pushRow();
+    } else if (char !== "\r") field += char;
   }
 
   pushField();
-  if (row.length > 1 || (row.length === 1 && row[0] !== "")) pushRow();
-
+  if (row.length > 1 || row[0] !== "") pushRow();
   return rows;
 }
 
-function norm(s: any): string {
-  return (s ?? "").toString().trim();
+function normalizedHeader(value: unknown) {
+  return String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function wantsU13FromRow(row: Record<string, string>): boolean {
-  const leagueInfo = norm(row["League Information - What league are you wanting your child to participate in?"]).toLowerCase();
-  const ageGroup = norm(row["Age Group"]).toLowerCase();
-
-  const playUpKeys = [
-    "BU",
-    "Playing Up",
-    "Playing up",
-    "Will your player be playing up to U13?",
-    "League Information - Will your player be playing up to U13?",
-    "League Information - Are you playing up to U13?",
-    "U13",
-    "u13",
-  ];
-
-  const playUpBlob = playUpKeys.map((k) => norm(row[k])).join(" ").toLowerCase();
-
-  return (
-    leagueInfo.includes("u13") ||
-    ageGroup.includes("u13") ||
-    playUpBlob.includes("u13") ||
-    playUpBlob.includes("yes") ||
-    playUpBlob.includes("true")
-  );
+function parseBoolean(value: unknown) {
+  return ["true", "yes", "y", "1"].includes(String(value ?? "").trim().toLowerCase());
 }
 
-function jerseyFromRow(row: Record<string, string>): string | null {
-  const keys = ["Jersey Size", "Jersey size", "Shirt Size", "Shirt size", "Uniform Size", "Uniform size"];
-  for (const k of keys) {
-    const v = norm(row[k]);
-    if (v) return v;
+function valueFor(row: Record<string, string>, ...names: string[]) {
+  for (const name of names) {
+    const value = normalizeDisplayName(row[normalizedHeader(name)]);
+    if (value) return value;
   }
-  return null;
+  return "";
 }
 
-function primaryPhoneFromRow(row: Record<string, string>): string | null {
-  const keys = [
-    "Contact Phone",
-    "Contact phone",
-    "Primary Phone",
-    "Primary phone",
-    "Phone",
-    "Mobile Phone",
-    "Mobile phone",
-    "Guardian Phone",
-    "Guardian phone",
-    "Parent Phone",
-    "Parent phone",
-    "Guardian 1 Mobile Phone Number",
-    "Guardian 1 Mobile Phone",
-    "Guardian 1 Phone",
-    "Guardian 1 Phone Number",
-  ];
-  for (const k of keys) {
-    const v = norm(row[k]);
-    if (v) return v;
+type ParsedPlayer = {
+  rowNumber: number;
+  identityKey: string;
+  normalizedName: string;
+  firstName: string;
+  lastName: string;
+  fullName: string;
+  dob: Date;
+  rating: number;
+  gender: string | null;
+  guardian1Name: string | null;
+  guardian2Name: string | null;
+  guardian2Phone: string | null;
+  primaryPhone: string | null;
+  primaryEmail: string | null;
+  jerseySize: string | null;
+  experience: string | null;
+  notes: string | null;
+  isGoalie: boolean;
+  siblingNames: string[];
+};
+
+function parseSeasonFile(text: string) {
+  const matrix = parseCsv(text);
+  if (matrix.length < 2) throw new Error("CSV appears empty.");
+
+  const headers = matrix[0].map(normalizedHeader);
+  const required = ["player", "rating", "date of birth"];
+  const missing = required.filter((name) => !headers.includes(normalizedHeader(name)));
+  if (missing.length) throw new Error(`CSV is missing required column(s): ${missing.join(", ")}.`);
+
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const players: ParsedPlayer[] = [];
+  const identityKeys = new Set<string>();
+
+  for (let rowIndex = 1; rowIndex < matrix.length; rowIndex += 1) {
+    const raw = matrix[rowIndex];
+    if (!raw.some((cell) => String(cell ?? "").trim())) continue;
+
+    const row: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      row[header] = raw[index] ?? "";
+    });
+
+    const rowNumber = rowIndex + 1;
+    const fullName = valueFor(row, "Player", "Full Name");
+    const dob = parseDateOnlyToUTCNoon(valueFor(row, "Date of Birth", "DOB"));
+    const ratingText = valueFor(row, "Rating");
+    const rating = Number(ratingText);
+
+    if (!fullName) {
+      errors.push(`Row ${rowNumber}: Player is required.`);
+      continue;
+    }
+    if (!dob) {
+      errors.push(`Row ${rowNumber}: ${fullName} has an invalid or missing Date of Birth.`);
+      continue;
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      errors.push(`Row ${rowNumber}: ${fullName} must have a whole-number rating from 1 through 5.`);
+      continue;
+    }
+
+    const { firstName, lastName } = splitPlayerName(fullName);
+    if (!firstName || !lastName) {
+      errors.push(`Row ${rowNumber}: ${fullName} must include a first and last name.`);
+      continue;
+    }
+
+    const identityKey = permanentPlayerIdentityKey(fullName, dob);
+    if (identityKeys.has(identityKey)) {
+      errors.push(`Row ${rowNumber}: ${fullName} and ${utcDateKey(dob)} appear more than once.`);
+      continue;
+    }
+    identityKeys.add(identityKey);
+
+    const siblingNames: string[] = [valueFor(row, "Sibling 1"), valueFor(row, "Sibling 2")]
+      .map((value) => normalizeDisplayName(value))
+      .filter((value): value is string => Boolean(value));
+    if (siblingNames.some((name) => normalizePlayerName(name) === normalizePlayerName(fullName))) {
+      errors.push(`Row ${rowNumber}: ${fullName} cannot be listed as their own sibling.`);
+    }
+
+    players.push({
+      rowNumber,
+      identityKey,
+      normalizedName: normalizePlayerName(fullName),
+      firstName,
+      lastName,
+      fullName: normalizeDisplayName(fullName),
+      dob,
+      rating,
+      gender: valueFor(row, "Gender") || null,
+      guardian1Name: valueFor(row, "Parent", "Guardian") || null,
+      guardian2Name: valueFor(row, "Second Parent", "Guardian 2") || null,
+      guardian2Phone: valueFor(row, "Second Parent Phone", "Guardian 2 Phone") || null,
+      primaryPhone: valueFor(row, "Parent Phone", "Primary Phone") || null,
+      primaryEmail: valueFor(row, "Parent Email", "Primary Email") || null,
+      jerseySize: valueFor(row, "Jersey Size") || null,
+      experience: valueFor(row, "Experience") || null,
+      notes: valueFor(row, "Parent Comment", "Notes") || null,
+      isGoalie: parseBoolean(valueFor(row, "Goalie?", "Goalie")),
+      siblingNames,
+    });
   }
-  return null;
-}
 
-function primaryEmailFromRow(row: Record<string, string>): string | null {
-  const keys = [
-    "Contact Email",
-    "Contact email",
-    "Email/UserID",
-    "Email",
-    "Email Address",
-    "Primary Email",
-    "Primary email",
-    "Guardian 1 Email Address",
-    "Guardian Email",
-    "Parent Email",
-  ];
-  for (const k of keys) {
-    const v = norm(row[k]);
-    if (v) return v;
-  }
-  return null;
-}
-
-function guardian1NameFromRow(row: Record<string, string>): string | null {
-  const directKeys = ["Enroller Name", "Enroller", "Registrant Name"];
-  for (const k of directKeys) {
-    const v = norm(row[k]);
-    if (v) return v;
-  }
-
-  const firstKeys = ["Enroller First Name", "Enroller First", "Enroller Firstname", "Registrant First Name"];
-  const lastKeys = ["Enroller Last Name", "Enroller Last", "Enroller Lastname", "Registrant Last Name"];
-
-  let first = "";
-  let last = "";
-
-  for (const k of firstKeys) {
-    const v = norm(row[k]);
-    if (v) {
-      first = v;
-      break;
+  const playersByName = new Map(players.map((player) => [player.normalizedName, player]));
+  for (const player of players) {
+    for (const siblingName of player.siblingNames) {
+      if (!playersByName.has(normalizePlayerName(siblingName))) {
+        warnings.push(`${player.fullName}: sibling ${siblingName} is not in this CSV.`);
+      }
     }
   }
 
-  for (const k of lastKeys) {
-    const v = norm(row[k]);
-    if (v) {
-      last = v;
-      break;
+  return { players, errors, warnings };
+}
+
+function buildSiblingGroups(players: ParsedPlayer[]) {
+  const byName = new Map(players.map((player) => [player.normalizedName, player]));
+  const neighbors = new Map<string, Set<string>>();
+  for (const player of players) neighbors.set(player.normalizedName, new Set());
+
+  for (const player of players) {
+    for (const siblingName of player.siblingNames) {
+      const siblingKey = normalizePlayerName(siblingName);
+      if (!byName.has(siblingKey) || siblingKey === player.normalizedName) continue;
+      neighbors.get(player.normalizedName)?.add(siblingKey);
+      neighbors.get(siblingKey)?.add(player.normalizedName);
     }
   }
 
-  const joined = `${first} ${last}`.trim();
-  return joined ? joined : null;
+  const groups: string[][] = [];
+  const visited = new Set<string>();
+  for (const name of neighbors.keys()) {
+    if (visited.has(name) || !neighbors.get(name)?.size) continue;
+    const stack = [name];
+    const group: string[] = [];
+    visited.add(name);
+    while (stack.length) {
+      const current = stack.pop()!;
+      group.push(current);
+      for (const next of neighbors.get(current) ?? []) {
+        if (!visited.has(next)) {
+          visited.add(next);
+          stack.push(next);
+        }
+      }
+    }
+    if (group.length > 1) groups.push(group.sort());
+  }
+  return groups;
 }
 
-function parseDateOnlyToUTCNoon(raw: unknown): Date | null {
-  const s = String(raw ?? "").trim();
-  if (!s) return null;
+async function preparePlan(eventId: string, text: string) {
+  const event = await prisma.draftEvent.findUnique({
+    where: { id: eventId },
+    include: { _count: { select: { players: true, picks: true } } },
+  });
+  if (!event) throw new Error("Draft event not found.");
+  if (event.phase === "ARCHIVED") throw new Error("Archived drafts cannot receive player imports.");
 
-  const mdy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2}|\d{4})$/);
-  if (mdy) {
-    const mm = Number(mdy[1]);
-    const dd = Number(mdy[2]);
-    let yy = Number(mdy[3]);
-    if (yy < 100) yy += 2000;
-    if (!Number.isFinite(mm) || !Number.isFinite(dd) || !Number.isFinite(yy)) return null;
-    return new Date(Date.UTC(yy, mm - 1, dd, 12, 0, 0));
-  }
-
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) {
-    const yy = Number(iso[1]);
-    const mm = Number(iso[2]);
-    const dd = Number(iso[3]);
-    return new Date(Date.UTC(yy, mm - 1, dd, 12, 0, 0));
-  }
-
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return null;
-  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0));
-}
-
-async function latestEvent() {
-  const e = await prisma.draftEvent.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { id: true, phase: true },
+  const parsed = parseSeasonFile(text);
+  const names = [...new Set(parsed.players.map((player) => player.normalizedName))];
+  const profiles = await prisma.permanentPlayer.findMany({
+    where: { OR: [{ identityKey: { in: parsed.players.map((player) => player.identityKey) } }, { normalizedName: { in: names } }] },
   });
 
-  if (e) return e;
+  const exactByKey = new Map(profiles.map((profile) => [profile.identityKey, profile]));
+  const byName = new Map<string, typeof profiles>();
+  for (const profile of profiles) {
+    const list = byName.get(profile.normalizedName) ?? [];
+    list.push(profile);
+    byName.set(profile.normalizedName, list);
+  }
 
-  const created = await prisma.draftEvent.create({
-    data: {
-      name: "CYS Draft Night",
-      scheduledAt: new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-      phase: "SETUP",
-      currentPick: 1,
-      pickClockSeconds: 120,
-      isPaused: true,
+  const matches = parsed.players.map((player) => {
+    const exact = exactByKey.get(player.identityKey);
+    if (exact) return { player, kind: "RETURNING" as const, profile: exact };
+
+    const sameName = byName.get(player.normalizedName) ?? [];
+    const historical = sameName.filter((profile) => profile.dob === null);
+    if (sameName.length === 1 && historical.length === 1) {
+      return { player, kind: "HISTORY_UPGRADE" as const, profile: historical[0] };
+    }
+
+    if (sameName.length === 1 && sameName[0].dob) {
+      const existingDob = new Date(sameName[0].dob);
+      const differenceDays = Math.abs(existingDob.getTime() - player.dob.getTime()) / 86_400_000;
+      if (differenceDays <= 1) {
+        parsed.warnings.push(
+          `${player.fullName}: DOB will be corrected from ${utcDateKey(existingDob)} to ${utcDateKey(player.dob)} and prior history will stay linked.`
+        );
+        return { player, kind: "DOB_CORRECTION" as const, profile: sameName[0] };
+      }
+      parsed.errors.push(
+        `${player.fullName}: existing DOB is ${utcDateKey(existingDob)}, but the CSV says ${utcDateKey(player.dob)}. Review this player before importing.`
+      );
+      return { player, kind: "CONFLICT" as const, profile: sameName[0] };
+    }
+
+    if (sameName.length > 1) {
+      parsed.errors.push(`${player.fullName}: multiple permanent players use this name. Review the match before importing.`);
+      return { player, kind: "CONFLICT" as const, profile: sameName[0] ?? null };
+    }
+
+    return { player, kind: "NEW" as const, profile: null };
+  });
+
+  const matchedProfileIds = matches.flatMap((match) => (match.profile ? [match.profile.id] : []));
+  const existingEntries = matchedProfileIds.length
+    ? await prisma.draftPlayer.findMany({
+        where: { draftEventId: event.id, permanentPlayerId: { in: matchedProfileIds } },
+        select: { id: true, permanentPlayerId: true },
+      })
+    : [];
+  const existingByProfileId = new Map(existingEntries.map((entry) => [entry.permanentPlayerId, entry]));
+
+  const newSeasonEntries = matches.filter((match) => !match.profile || !existingByProfileId.has(match.profile.id)).length;
+  const updatedSeasonEntries = matches.length - newSeasonEntries;
+  const existingPlayersNotInFile = Math.max(0, event._count.players - updatedSeasonEntries);
+  if (existingPlayersNotInFile > 0) {
+    parsed.warnings.push(
+      `${existingPlayersNotInFile} existing player record(s) in this event are not present in the file and will be preserved.`
+    );
+  }
+
+  const canApply =
+    parsed.errors.length === 0 &&
+    event.phase === "SETUP" &&
+    event._count.picks === 0 &&
+    parsed.players.length > 0;
+
+  return {
+    event,
+    parsed,
+    matches,
+    summary: {
+      rows: parsed.players.length,
+      returningPlayers: matches.filter((match) => match.kind === "RETURNING").length,
+      historicalPlayersUpgraded: matches.filter((match) => match.kind === "HISTORY_UPGRADE").length,
+      dobCorrections: matches.filter((match) => match.kind === "DOB_CORRECTION").length,
+      identityConflicts: matches.filter((match) => match.kind === "CONFLICT").length,
+      newPermanentPlayers: matches.filter((match) => match.kind === "NEW").length,
+      newSeasonEntries,
+      updatedSeasonEntries,
+      existingPlayersPreserved: existingPlayersNotInFile,
+      siblingGroups: buildSiblingGroups(parsed.players).length,
+      errors: parsed.errors.length,
+      warnings: parsed.warnings.length,
     },
-    select: { id: true, phase: true },
-  });
-
-  return created;
+    canApply,
+  };
 }
-
-const PARENTS_COMMENT_HEADER =
-  "Experience: Tell us about your player. How many seasons have they played soccer? What positions do they like to play?";
 
 export async function POST(req: Request) {
+  const session = await getServerSession(authOptions);
+  if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
   try {
-    const session = await getServerSession(authOptions);
-    if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const form = await req.formData();
+    const file = form.get("file");
+    const eventId = String(form.get("eventId") ?? "").trim();
+    const mode = String(form.get("mode") ?? "preview").trim().toLowerCase();
 
-    const event = await latestEvent();
+    if (!eventId) return NextResponse.json({ error: "Choose a draft event first." }, { status: 400 });
+    if (!file || !(file instanceof File)) return NextResponse.json({ error: "Choose a CSV file." }, { status: 400 });
+    if (!['preview', 'apply'].includes(mode)) return NextResponse.json({ error: "Invalid import mode." }, { status: 400 });
 
-    if (event.phase !== "SETUP") {
+    const text = await file.text();
+    const fileHash = createHash("sha256").update(text).digest("hex");
+    const plan = await preparePlan(eventId, text);
+
+    const responseBase = {
+      ok: true,
+      mode,
+      fileName: file.name,
+      fileHash,
+      event: {
+        id: plan.event.id,
+        name: plan.event.name,
+        phase: plan.event.phase,
+        division: plan.event.division,
+        season: plan.event.season,
+        seasonYear: plan.event.seasonYear,
+      },
+      summary: plan.summary,
+      errors: plan.parsed.errors,
+      warnings: plan.parsed.warnings,
+      canApply: plan.canApply,
+    };
+
+    if (mode === "preview") return NextResponse.json(responseBase);
+    if (!plan.canApply) {
       return NextResponse.json(
-        { error: "Draft is LIVE. CSV upload is locked. Stop the draft to unlock uploads." },
+        {
+          ...responseBase,
+          error:
+            plan.event.phase !== "SETUP"
+              ? "The selected event must be in SETUP before importing."
+              : plan.event._count.picks > 0
+                ? "This event already has draft picks. Import is blocked to protect draft results."
+                : "Fix the CSV errors before importing.",
+        },
         { status: 409 }
       );
     }
 
-    const form = await req.formData();
-    const file = form.get("file");
+    const siblingGroups = buildSiblingGroups(plan.parsed.players);
+    const result = await prisma.$transaction(async (tx) => {
+      const playerIdsByName = new Map<string, string>();
+      let createdProfiles = 0;
+      let upgradedProfiles = 0;
+      let correctedProfiles = 0;
+      let createdEntries = 0;
+      let updatedEntries = 0;
 
-    if (!file || !(file instanceof File)) {
-      return NextResponse.json({ error: "Missing file" }, { status: 400 });
-    }
+      for (const match of plan.matches) {
+        let profile = match.profile;
+        if (match.kind === "NEW") {
+          profile = await tx.permanentPlayer.create({
+            data: {
+              identityKey: match.player.identityKey,
+              firstName: match.player.firstName,
+              lastName: match.player.lastName,
+              fullName: match.player.fullName,
+              normalizedName: match.player.normalizedName,
+              dob: match.player.dob,
+            },
+          });
+          createdProfiles += 1;
+        } else if (match.kind === "HISTORY_UPGRADE" || match.kind === "DOB_CORRECTION") {
+          profile = await tx.permanentPlayer.update({
+            where: { id: match.profile!.id },
+            data: {
+              identityKey: match.player.identityKey,
+              firstName: match.player.firstName,
+              lastName: match.player.lastName,
+              fullName: match.player.fullName,
+              normalizedName: match.player.normalizedName,
+              dob: match.player.dob,
+            },
+          });
+          if (match.kind === "HISTORY_UPGRADE") upgradedProfiles += 1;
+          else correctedProfiles += 1;
+        } else if (match.kind === "CONFLICT") {
+          throw new Error(`Resolve the permanent-player conflict for ${match.player.fullName} before importing.`);
+        }
+        if (!profile) throw new Error(`Could not resolve permanent player for ${match.player.fullName}.`);
 
-    const text = await file.text();
-    const matrix = parseCsv(text);
-    if (matrix.length < 2) return NextResponse.json({ error: "CSV appears empty" }, { status: 400 });
+        const existing = await tx.draftPlayer.findFirst({
+          where: { draftEventId: plan.event.id, permanentPlayerId: profile.id },
+          select: { id: true },
+        });
 
-    const header = matrix[0].map((h) => norm(h));
-    const rows = matrix.slice(1);
+        const data = {
+          permanentPlayerId: profile.id,
+          firstName: match.player.firstName,
+          lastName: match.player.lastName,
+          fullName: match.player.fullName,
+          gender: match.player.gender,
+          dob: match.player.dob,
+          birthYear: match.player.dob.getUTCFullYear(),
+          leagueChoice: plan.event.division,
+          wantsU13: plan.event.division === "U13",
+          jerseySize: match.player.jerseySize,
+          guardian1Name: match.player.guardian1Name,
+          guardian2Name: match.player.guardian2Name,
+          guardian2Phone: match.player.guardian2Phone,
+          primaryPhone: match.player.primaryPhone,
+          primaryEmail: match.player.primaryEmail,
+          experience: match.player.experience,
+          notes: match.player.notes,
+          rating: match.player.rating,
+          isGoalie: match.player.isGoalie,
+          isDraftEligible: true,
+        };
 
-    const objects: Record<string, string>[] = [];
-    for (const r of rows) {
-      const obj: Record<string, string> = {};
-      for (let i = 0; i < header.length; i++) obj[header[i]] = r[i] ?? "";
-      objects.push(obj);
-    }
+        const entry = existing
+          ? await tx.draftPlayer.update({ where: { id: existing.id }, data })
+          : await tx.draftPlayer.create({ data: { draftEventId: plan.event.id, ...data } });
 
-    const expIdx = header.findIndex((h) => h.toLowerCase() === PARENTS_COMMENT_HEADER.toLowerCase());
-    const draftEventId = event.id;
+        if (existing) updatedEntries += 1;
+        else createdEntries += 1;
+        playerIdsByName.set(match.player.normalizedName, entry.id);
+      }
 
-    const toCreate: any[] = [];
-    const regIds: string[] = [];
-    const seen = new Set<string>();
+      const importedPlayerIds = [...playerIdsByName.values()];
+      if (importedPlayerIds.length) {
+        // Reconcile only sibling configuration for players in this current SETUP import.
+        // Players, picks, teams, and all historical events remain untouched.
+        await tx.siblingDraftCost.deleteMany({
+          where: { draftEventId: plan.event.id, playerId: { in: importedPlayerIds } },
+        });
+      }
 
-    let total = 0;
-    let eligible = 0;
-
-    for (let i = 0; i < objects.length; i++) {
-      const o = objects[i];
-      const rawRow = rows[i] ?? [];
-      total += 1;
-
-      const registrationId =
-        norm(o["Registration ID"]) ||
-        norm(o["Registration Id"]) ||
-        norm(o["RegistrationID"]) ||
-        norm(o["Registration"]) ||
-        null;
-
-      const firstName = norm(o["First Name"]) || norm(o["Player First Name"]) || norm(o["Participant First Name"]);
-      const lastName = norm(o["Last Name"]) || norm(o["Player Last Name"]) || norm(o["Participant Last Name"]);
-      if (!firstName || !lastName) continue;
-
-      const fullName = `${firstName} ${lastName}`.trim();
-
-      const dobRaw = o["DOB"] ?? o["Date of Birth"] ?? o["Birthdate"] ?? "";
-      const dob = parseDateOnlyToUTCNoon(dobRaw);
-
-      const birthYearRaw = norm(o["Birth Year"]);
-      const birthYear = birthYearRaw ? Number(birthYearRaw) : dob ? dob.getUTCFullYear() : null;
-
-      const gender = norm(o["Gender"]) || null;
-
-      const leagueChoice =
-        norm(o["League Information - What league are you wanting your child to participate in?"]) ||
-        norm(o["League Choice"]) ||
-        norm(o["League"]) ||
-        norm(o["Age Group"]) ||
-        null;
-
-      const wantsU13 = wantsU13FromRow(o);
-      const jerseySize = jerseyFromRow(o);
-
-      const primaryEmail = primaryEmailFromRow(o);
-      const primaryPhone = primaryPhoneFromRow(o);
-
-      const guardian1Name = guardian1NameFromRow(o);
-      const guardian2Name = null;
-
-      const eligibleDob = !!dob && dob.getTime() >= DOB_MIN.getTime() && dob.getTime() <= DOB_MAX.getTime();
-      const isDraftEligible = eligibleDob && wantsU13;
-      if (isDraftEligible) eligible += 1;
-
-      const parentsComment =
-        norm(o[PARENTS_COMMENT_HEADER]) ||
-        (expIdx >= 0 ? norm(rawRow[expIdx] ?? "") : "") ||
-        (rawRow[73] ? norm(rawRow[73]) : "") ||
-        null;
-
-      const dedupeKey =
-        registrationId
-          ? `rid:${registrationId}`
-          : `nm:${firstName}|${lastName}|${dob ? dob.toISOString().slice(0, 10) : ""}`;
-
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-
-      if (registrationId) regIds.push(registrationId);
-
-      toCreate.push({
-        draftEventId,
-        registrationId,
-        firstName,
-        lastName,
-        fullName,
-        gender,
-        dob,
-        birthYear: Number.isFinite(birthYear as any) ? (birthYear as number) : null,
-        leagueChoice,
-        wantsU13,
-        jerseySize,
-        guardian1Name,
-        guardian2Name,
-        primaryPhone,
-        primaryEmail,
-        experience: parentsComment,
-        isDraftEligible,
-        isDrafted: false,
-        draftedTeamId: null,
-        draftedAt: null,
-        rank: null,
-      });
-    }
-
-    if (toCreate.length === 0) {
-      return NextResponse.json({ error: "No valid player rows found to import" }, { status: 400 });
-    }
-
-    await prisma.$transaction(async (tx) => {
-      await tx.draftPick.deleteMany({ where: { draftEventId } });
-      await tx.draftPlayer.deleteMany({ where: { draftEventId } });
-
-      if (regIds.length) {
-        await tx.draftPlayer.deleteMany({ where: { registrationId: { in: regIds } } });
+      for (const group of siblingGroups) {
+        const groupKey = `siblings:${createHash("sha256").update(group.join("|")).digest("hex").slice(0, 24)}`;
+        for (const normalizedName of group) {
+          const playerId = playerIdsByName.get(normalizedName);
+          if (!playerId) continue;
+          await tx.siblingDraftCost.create({
+            data: { draftEventId: plan.event.id, playerId, groupKey, draftCost: null },
+          });
+        }
       }
 
       await tx.draftEvent.update({
-        where: { id: draftEventId },
-        data: {
-          phase: "SETUP",
-          currentPick: 1,
-          isPaused: true,
-          clockEndsAt: null,
-          pauseRemainingSecs: null,
-        },
+        where: { id: plan.event.id },
+        data: { sourceFile: file.name, sourceHash: fileHash },
       });
 
-      await tx.draftPlayer.createMany({ data: toCreate });
+      return {
+        createdProfiles,
+        upgradedProfiles,
+        correctedProfiles,
+        createdEntries,
+        updatedEntries,
+        siblingGroups: siblingGroups.length,
+      };
+    }, {
+      maxWait: 10_000,
+      timeout: 60_000,
     });
 
-    return NextResponse.json({
-      ok: true,
-      processed: toCreate.length,
-      totalRows: total,
-      eligibleRows: eligible,
-    });
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message ? String(err.message) : "Upload failed" }, { status: 500 });
+    return NextResponse.json({ ...responseBase, applied: true, result });
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message ?? "Import failed" }, { status: 500 });
   }
 }

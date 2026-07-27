@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { requireActiveDraftEventId } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -18,19 +19,7 @@ function isAdminOrBoard(session: any) {
 }
 
 async function currentEvent() {
-  const e =
-    (await prisma.draftEvent.findFirst({
-      where: { phase: "LIVE" },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    })) ??
-    (await prisma.draftEvent.findFirst({
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    }));
-
-  if (!e?.id) throw new Error("No draft event found");
-  return e.id;
+  return requireActiveDraftEventId();
 }
 
 export async function POST() {
@@ -42,7 +31,7 @@ export async function POST() {
 
     const draftEventId = await currentEvent();
 
- 
+
     const maxRow = await prisma.draftPlayer.aggregate({
       where: { draftEventId, evalNumber: { not: null } },
       _max: { evalNumber: true },

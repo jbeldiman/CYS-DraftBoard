@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { requireActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -10,9 +11,7 @@ function isAdmin(session: any) {
 }
 
 async function latestEvent() {
-  const e = await prisma.draftEvent.findFirst({ orderBy: { createdAt: "desc" } });
-  if (!e) throw new Error("No draft event found");
-  return e;
+  return requireActiveDraftEvent();
 }
 
 export async function POST(req: Request) {

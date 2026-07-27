@@ -13,8 +13,10 @@ export async function proxy(req: NextRequest) {
   const isDraftRoute = path.startsWith("/draft");
   const isCoachHubRoute = path.startsWith("/siblings") || path.startsWith("/history");
   const isTradeRoute = path.startsWith("/trade");
+  const isPlayersRoute = path.startsWith("/players");
 
-  const isProtectedRoute = isRootRoute || isAdminRoute || isDraftRoute || isCoachHubRoute || isTradeRoute;
+  const isProtectedRoute =
+    isRootRoute || isAdminRoute || isDraftRoute || isCoachHubRoute || isTradeRoute || isPlayersRoute;
 
   if (!isProtectedRoute) {
     return NextResponse.next();

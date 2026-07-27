@@ -17,25 +17,37 @@ export async function DELETE(_req: Request, context: any) {
     const id = String(context?.params?.id ?? "").trim();
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-    await prisma.user.delete({ where: { id } });
+    const coach = await prisma.user.findUnique({
+      where: { id },
+      select: { id: true, role: true, coachDivision: true, isDraftCoach: true },
+    });
+    if (!coach || !coach.isDraftCoach) return NextResponse.json({ error: "Coach not found" }, { status: 404 });
 
-    const remaining = await prisma.user.findMany({
-      where: { role: "COACH" },
-      orderBy: [{ coachOrder: "asc" }, { createdAt: "asc" }],
-      select: { id: true },
+    await prisma.user.update({
+      where: { id },
+      data: {
+        isDraftCoach: false,
+        coachDivision: null,
+        coachOrder: 0,
+        role: coach.role === "COACH" ? "PARENT" : coach.role,
+      },
     });
 
-    await prisma.$transaction(
-      remaining.map((u: { id: string }, idx: number) =>
-        prisma.user.update({
-          where: { id: u.id },
-          data: { coachOrder: idx + 1 },
-        })
-      )
-    );
+    if (coach.coachDivision) {
+      const remaining = await prisma.user.findMany({
+        where: { isDraftCoach: true, coachDivision: coach.coachDivision },
+        orderBy: [{ coachOrder: "asc" }, { createdAt: "asc" }],
+        select: { id: true },
+      });
+      await prisma.$transaction(
+        remaining.map((user, index) =>
+          prisma.user.update({ where: { id: user.id }, data: { coachOrder: index + 1 } })
+        )
+      );
+    }
 
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Failed to remove coach" }, { status: 500 });
+    return NextResponse.json({ ok: true, preservedHistory: true });
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message ?? "Failed to remove coach" }, { status: 500 });
   }
 }

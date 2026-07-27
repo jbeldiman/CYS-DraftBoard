@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getOrCreateActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -10,25 +11,7 @@ function isAdmin(session: any) {
 }
 
 async function latestEventId() {
-  const e = await prisma.draftEvent.findFirst({
-    orderBy: { createdAt: "desc" },
-    select: { id: true },
-  });
-  if (!e?.id) {
-    const created = await prisma.draftEvent.create({
-      data: {
-        name: "CYS Draft Night",
-        scheduledAt: new Date(Date.UTC(2026, 1, 16, 23, 0, 0)),
-        phase: "SETUP",
-        currentPick: 1,
-        pickClockSeconds: 120,
-        isPaused: true,
-      },
-      select: { id: true },
-    });
-    return created.id;
-  }
-  return e.id;
+  return (await getOrCreateActiveDraftEvent()).id;
 }
 
 export async function GET() {

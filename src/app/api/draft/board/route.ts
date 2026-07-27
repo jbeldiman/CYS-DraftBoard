@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getActiveDraftEventId } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -32,18 +33,7 @@ function normalizeEntries(input: any): Array<{ playerId: string; addedAt: number
 }
 
 async function getActiveEventId() {
-  const event =
-    (await prisma.draftEvent.findFirst({
-      where: { phase: "LIVE" },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    })) ??
-    (await prisma.draftEvent.findFirst({
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    }));
-
-  return event?.id ?? null;
+  return getActiveDraftEventId();
 }
 
 async function resolveTeamId(req: Request, session: any, draftEventId: string) {
@@ -56,7 +46,7 @@ async function resolveTeamId(req: Request, session: any, draftEventId: string) {
 
   if (teamIdParam) {
     if (!admin) {
-      
+
       return null;
     }
 

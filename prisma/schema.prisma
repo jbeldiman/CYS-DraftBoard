@@ -62,7 +62,9 @@ model User {
   passwordHash String?
   role         Role    @default(PARENT)
 
-  coachOrder Int @default(0)
+  isDraftCoach  Boolean        @default(false)
+  coachDivision DraftDivision?
+  coachOrder    Int            @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -76,6 +78,8 @@ model User {
 
   createdTrades   Trade[] @relation("TradeCreatedBy")
   respondedTrades Trade[] @relation("TradeRespondedBy")
+
+  @@index([isDraftCoach, coachDivision, coachOrder])
 }
 
 model Trade {
@@ -137,8 +141,9 @@ model AccessRequest {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  type   AccessRequestType
-  status AccessRequestStatus @default(PENDING)
+  type              AccessRequestType
+  requestedDivision DraftDivision?
+  status            AccessRequestStatus @default(PENDING)
 
   requestedAt   DateTime  @default(now())
   decidedAt     DateTime?
@@ -193,6 +198,7 @@ model DraftEvent {
   scheduledAt        DateTime
   scheduledDateKnown Boolean    @default(true)
   phase              DraftPhase @default(SETUP)
+  isActive           Boolean    @default(false)
 
   seasonYear Int?
   season     DraftSeason?
@@ -216,6 +222,8 @@ model DraftEvent {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([isActive, phase])
 }
 
 model DraftTeam {
@@ -282,10 +290,11 @@ model DraftPlayer {
 
   jerseySize String?
 
-  guardian1Name String?
-  guardian2Name String?
-  primaryPhone  String?
-  primaryEmail  String?
+  guardian1Name  String?
+  guardian2Name  String?
+  guardian2Phone String?
+  primaryPhone   String?
+  primaryEmail   String?
 
   experience       String?
   rating           Int?

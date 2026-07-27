@@ -11,6 +11,7 @@ export const config = {
     "/draft/:path*",
     "/siblings/:path*",
     "/history/:path*",
+    "/players/:path*",
     "/admin/:path*",
     "/trade/:path*",
   ],
