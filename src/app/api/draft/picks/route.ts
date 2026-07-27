@@ -1,18 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getActiveDraftEvent } from "@/lib/activeDraftEvent";
 
 export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const event =
-      (await prisma.draftEvent.findFirst({
-        where: { phase: "LIVE" },
-        orderBy: { updatedAt: "desc" },
-      })) ??
-      (await prisma.draftEvent.findFirst({
-        orderBy: { updatedAt: "desc" },
-      }));
+    const event = await getActiveDraftEvent();
 
     if (!event) return NextResponse.json({ picks: [] });
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -14,14 +15,7 @@ export async function GET() {
   const session = await getServerSession(authOptions);
   if (!isStaff(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  const event =
-    (await prisma.draftEvent.findFirst({
-      where: { phase: "LIVE" },
-      orderBy: { updatedAt: "desc" },
-    })) ??
-    (await prisma.draftEvent.findFirst({
-      orderBy: { updatedAt: "desc" },
-    }));
+  const event = await getActiveDraftEvent();
 
   if (!event) return NextResponse.json({ teams: [] });
 

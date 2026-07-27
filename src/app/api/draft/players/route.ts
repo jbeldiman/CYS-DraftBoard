@@ -1,22 +1,13 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/authOptions";
 import { prisma } from "@/lib/prisma";
+import { requireActiveDraftEventId } from "@/lib/activeDraftEvent";
 
 export const runtime = "nodejs";
 
 async function resolveEventId() {
-  const event =
-    (await prisma.draftEvent.findFirst({
-      where: { phase: "LIVE" },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    })) ??
-    (await prisma.draftEvent.findFirst({
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    }));
-
-  if (!event?.id) throw new Error("No draft event found");
-  return event.id;
+  return requireActiveDraftEventId();
 }
 
 function toRating(v: any): number | null {
@@ -31,6 +22,8 @@ function toRating(v: any): number | null {
 
 export async function GET(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const url = new URL(req.url);
 
     const eligible = url.searchParams.get("eligible");
@@ -63,7 +56,6 @@ export async function GET(req: Request) {
       orderBy: [{ isDrafted: "asc" }, { lastName: "asc" }, { firstName: "asc" }],
       select: {
         id: true,
-        registrationId: true,
         firstName: true,
         lastName: true,
         fullName: true,
@@ -73,12 +65,9 @@ export async function GET(req: Request) {
         leagueChoice: true,
         wantsU13: true,
         jerseySize: true,
-        guardian1Name: true,
-        guardian2Name: true,
-        primaryPhone: true,
-        primaryEmail: true,
         experience: true,
         rank: true,
+        rating: true,
 
         spring2025Rating: true,
         fall2025Rating: true,
@@ -98,11 +87,11 @@ export async function GET(req: Request) {
     });
 
     const players = rows.map((p) => {
-      const spring2026Rating = toRating(p.spring2026Rating);
+      const currentRating = toRating(p.rating ?? p.spring2026Rating);
       return {
         ...p,
-        spring2026Rating,
-        rating: spring2026Rating,
+        spring2026Rating: currentRating,
+        rating: currentRating,
         isGoalie: !!p.isGoalie,
         evalAttended: !!p.evalAttended,
         evalNumber: p.evalNumber ?? null,

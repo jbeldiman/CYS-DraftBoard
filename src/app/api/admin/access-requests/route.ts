@@ -28,6 +28,7 @@ export async function GET(req: Request) {
       select: {
         id: true,
         type: true,
+        requestedDivision: true,
         status: true,
         requestedAt: true,
         decidedAt: true,

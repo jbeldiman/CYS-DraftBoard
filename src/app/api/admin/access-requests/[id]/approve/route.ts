@@ -45,18 +45,30 @@ export async function POST(req: Request, context: any) {
 
     const ar = await prisma.accessRequest.findUnique({
       where: { id: requestId },
-      select: { id: true, status: true, type: true, userId: true },
+      select: { id: true, status: true, type: true, requestedDivision: true, userId: true },
     });
 
     if (!ar) return NextResponse.json({ error: "Not found" }, { status: 404 });
     if (ar.status !== "PENDING") return NextResponse.json({ error: "Request is not pending" }, { status: 400 });
 
     const roleToSet = ar.type === "COACH" ? "COACH" : "BOARD";
+    const nextOrder =
+      ar.type === "COACH" && ar.requestedDivision
+        ? ((await prisma.user.aggregate({
+            where: { isDraftCoach: true, coachDivision: ar.requestedDivision },
+            _max: { coachOrder: true },
+          }))._max.coachOrder ?? 0) + 1
+        : 0;
 
     await prisma.$transaction([
       prisma.user.update({
         where: { id: ar.userId },
-        data: { role: roleToSet as any },
+        data: {
+          role: roleToSet as any,
+          isDraftCoach: ar.type === "COACH",
+          coachDivision: ar.type === "COACH" ? ar.requestedDivision : null,
+          coachOrder: ar.type === "COACH" ? nextOrder : 0,
+        },
       }),
       prisma.accessRequest.update({
         where: { id: ar.id },

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -13,14 +14,7 @@ export async function GET() {
     const meEmail = (session?.user as any)?.email as string | undefined;
     const meRole = (session?.user as any)?.role as string | undefined;
 
-    const event =
-      (await prisma.draftEvent.findFirst({
-        where: { phase: "LIVE" },
-        orderBy: { updatedAt: "desc" },
-      })) ??
-      (await prisma.draftEvent.findFirst({
-        orderBy: { updatedAt: "desc" },
-      }));
+    const event = await getActiveDraftEvent();
 
     if (!event) {
       return NextResponse.json({

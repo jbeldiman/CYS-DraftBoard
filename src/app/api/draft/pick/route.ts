@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { getActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -101,14 +102,7 @@ export async function POST(req: Request) {
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const event =
-        (await tx.draftEvent.findFirst({
-          where: { phase: "LIVE" },
-          orderBy: { updatedAt: "desc" },
-        })) ??
-        (await tx.draftEvent.findFirst({
-          orderBy: { updatedAt: "desc" },
-        }));
+      const event = await getActiveDraftEvent(tx);
 
       if (!event) throw new Error("No draft event found.");
       if (event.phase !== "LIVE") throw new Error("Draft is not live.");

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/authOptions";
 import { prisma } from "@/lib/prisma";
+import { getActiveDraftEvent } from "@/lib/activeDraftEvent";
 
 export const runtime = "nodejs";
 
@@ -28,34 +29,38 @@ function safeFilenamePart(value: string): string {
   return cleaned || "cys-draft";
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
   if (!isAdmin(session)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const event = await prisma.draftEvent.findFirst({
-    orderBy: { createdAt: "desc" },
-    include: {
-      players: {
-        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+  const requestedEventId = new URL(req.url).searchParams.get("eventId")?.trim() || null;
+  const activeEvent = requestedEventId ? null : await getActiveDraftEvent();
+  const eventId = requestedEventId ?? activeEvent?.id ?? null;
+  const event = eventId
+    ? await prisma.draftEvent.findUnique({
+        where: { id: eventId },
         include: {
-          draftedTeam: { select: { name: true } },
-          picks: {
-            where: {},
-            orderBy: { overallNumber: "asc" },
-            select: {
-              overallNumber: true,
-              round: true,
-              pickInRound: true,
-              madeAt: true,
-              team: { select: { name: true } },
+          players: {
+            orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+            include: {
+              draftedTeam: { select: { name: true } },
+              picks: {
+                orderBy: { overallNumber: "asc" },
+                select: {
+                  overallNumber: true,
+                  round: true,
+                  pickInRound: true,
+                  madeAt: true,
+                  team: { select: { name: true } },
+                },
+              },
             },
           },
         },
-      },
-    },
-  });
+      })
+    : null;
 
   if (!event) {
     return NextResponse.json({ error: "No draft event exists yet." }, { status: 404 });

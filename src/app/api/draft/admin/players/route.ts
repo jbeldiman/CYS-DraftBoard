@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
+import { requireActiveDraftEvent } from "@/lib/activeDraftEvent";
 import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
@@ -18,19 +19,7 @@ function isAdminOrBoard(session: any) {
 }
 
 async function currentEvent() {
-  const e =
-    (await prisma.draftEvent.findFirst({
-      where: { phase: "LIVE" },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    })) ??
-    (await prisma.draftEvent.findFirst({
-      orderBy: { updatedAt: "desc" },
-      select: { id: true },
-    }));
-
-  if (!e?.id) throw new Error("No draft event found");
-  return e.id;
+  return requireActiveDraftEvent();
 }
 
 function boolParam(v: string | null) {
@@ -66,11 +55,17 @@ function clampBool(v: any): boolean | undefined {
 
 export async function GET(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!isAdminOrBoard(session)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const url = new URL(req.url);
     const eligible = boolParam(url.searchParams.get("eligible"));
     const drafted = boolParam(url.searchParams.get("drafted"));
 
-    const draftEventId = await currentEvent();
+    const event = await currentEvent();
+    const draftEventId = event.id;
 
     const where: any = { draftEventId };
     if (eligible !== null) where.isDraftEligible = eligible;
@@ -84,6 +79,7 @@ export async function GET(req: Request) {
         fullName: true,
         jerseySize: true,
         rank: true,
+        rating: true,
         spring2026Rating: true,
         isDraftEligible: true,
         isDrafted: true,
@@ -93,19 +89,22 @@ export async function GET(req: Request) {
       },
     });
 
-    const out = players.map((p) => ({
-      id: p.id,
-      fullName: p.fullName,
-      jerseySize: p.jerseySize,
-      rank: p.rank,
-      spring2026Rating: p.spring2026Rating ?? null,
-      rating: p.spring2026Rating ?? null,
-      isDraftEligible: p.isDraftEligible,
-      isDrafted: p.isDrafted,
-      isGoalie: !!p.isGoalie,
-      evalAttended: !!p.evalAttended,
-      evalNumber: p.evalNumber ?? null,
-    }));
+    const out = players.map((p) => {
+      const currentRating = p.rating ?? p.spring2026Rating ?? null;
+      return {
+        id: p.id,
+        fullName: p.fullName,
+        jerseySize: p.jerseySize,
+        rank: p.rank,
+        spring2026Rating: currentRating,
+        rating: currentRating,
+        isDraftEligible: p.isDraftEligible,
+        isDrafted: p.isDrafted,
+        isGoalie: !!p.isGoalie,
+        evalAttended: !!p.evalAttended,
+        evalNumber: p.evalNumber ?? null,
+      };
+    });
 
     return NextResponse.json({ draftEventId, players: out });
   } catch (err: any) {
@@ -135,7 +134,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const draftEventId = await currentEvent();
+    const event = await currentEvent();
+    const draftEventId = event.id;
 
     await prisma.$transaction(
       players.map((p: any) => {
@@ -145,7 +145,7 @@ export async function POST(req: Request) {
         const evalAttended = clampBool(p?.evalAttended);
 
         if (!isAdmin) {
-          
+
           return prisma.draftPlayer.updateMany({
             where: { id, draftEventId },
             data: {
@@ -154,14 +154,17 @@ export async function POST(req: Request) {
           });
         }
 
-        
-        const spring2026Rating = clampRating(p?.spring2026Rating);
+
+        const currentRating = clampRating(p?.rating ?? p?.spring2026Rating);
         const isGoalie = clampBool(p?.isGoalie);
 
         return prisma.draftPlayer.updateMany({
           where: { id, draftEventId },
           data: {
-            spring2026Rating,
+            rating: currentRating,
+            ...(event.seasonYear === 2026 && event.season === "SPRING"
+              ? { spring2026Rating: currentRating }
+              : {}),
             notes: p?.notes ?? null,
             experience: p?.experience ?? null,
             ...(typeof isGoalie === "boolean" ? { isGoalie } : {}),

@@ -5,8 +5,15 @@ import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
 
+type Division = "U11" | "U13";
+
 function isAdmin(session: any) {
   return session?.user && (session.user as any).role === "ADMIN";
+}
+
+function asDivision(value: unknown): Division | null {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  return normalized === "U11" || normalized === "U13" ? normalized : null;
 }
 
 export async function POST(req: Request) {
@@ -14,33 +21,37 @@ export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
     if (!isAdmin(session)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-    const body = (await req.json().catch(() => ({}))) as { coachIds?: unknown };
-    const coachIds: string[] = Array.isArray(body?.coachIds) ? (body.coachIds as unknown[]).map((v) => String(v)) : [];
+    const body = await req.json().catch(() => ({}));
+    const division = asDivision(body?.division);
+    const coachIds = Array.isArray(body?.coachIds) ? body.coachIds.map((value: unknown) => String(value)) : [];
 
-    if (coachIds.length === 0) {
-      return NextResponse.json({ error: "coachIds[] is required" }, { status: 400 });
+    if (!division) return NextResponse.json({ error: "division must be U11 or U13" }, { status: 400 });
+    if (coachIds.length === 0) return NextResponse.json({ error: "coachIds[] is required" }, { status: 400 });
+    if (new Set(coachIds).size !== coachIds.length) {
+      return NextResponse.json({ error: "coachIds must be unique" }, { status: 400 });
     }
 
-    const found = await prisma.user.findMany({
-      where: { id: { in: coachIds }, role: "COACH" },
+    const divisionCoaches = await prisma.user.findMany({
+      where: { isDraftCoach: true, coachDivision: division },
       select: { id: true },
     });
+    const expected = new Set(divisionCoaches.map((coach) => coach.id));
 
-    if (found.length !== coachIds.length) {
-      return NextResponse.json({ error: "One or more coachIds are invalid" }, { status: 400 });
+    if (expected.size !== coachIds.length || coachIds.some((id: string) => !expected.has(id))) {
+      return NextResponse.json(
+        { error: `The order must include every ${division} coach exactly once.` },
+        { status: 400 }
+      );
     }
 
     await prisma.$transaction(
-      coachIds.map((id: string, idx: number) =>
-        prisma.user.update({
-          where: { id },
-          data: { coachOrder: idx + 1 },
-        })
+      coachIds.map((id: string, index: number) =>
+        prisma.user.update({ where: { id }, data: { coachOrder: index + 1 } })
       )
     );
 
-    return NextResponse.json({ ok: true, updated: coachIds.length });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Failed to save coach order" }, { status: 500 });
+    return NextResponse.json({ ok: true, division, updated: coachIds.length });
+  } catch (error: any) {
+    return NextResponse.json({ error: error?.message ?? "Failed to save coach order" }, { status: 500 });
   }
 }
