@@ -104,6 +104,7 @@ type RemainingPlayer = {
   id: string;
   fullName: string;
   rating: number | null;
+  isGoalie: boolean;
 };
 
 const FALLBACK_TEAMS_ENDPOINT = "/api/admin/teams";
@@ -252,6 +253,7 @@ export default function LiveDraftPage() {
             id: String(p.id),
             fullName: String(p.fullName ?? ""),
             rating: Number.isFinite(rating as any) ? (rating as number) : fallback,
+          isGoalie: Boolean(p?.isGoalie),
           } as RemainingPlayer;
         })
       );
@@ -385,8 +387,20 @@ export default function LiveDraftPage() {
 
   const filteredRemaining = useMemo(() => {
     const s = q.trim().toLowerCase();
-    if (!s) return remaining;
-    return remaining.filter((p) => (p.fullName ?? "").toLowerCase().includes(s));
+
+    return remaining
+      .filter((p) => !s || (p.fullName ?? "").toLowerCase().includes(s))
+      .slice()
+      .sort((a, b) => {
+        const ratingDifference = (b.rating ?? -1) - (a.rating ?? -1);
+        if (ratingDifference !== 0) return ratingDifference;
+
+        if (a.isGoalie !== b.isGoalie) {
+          return a.isGoalie ? -1 : 1;
+        }
+
+        return a.fullName.localeCompare(b.fullName);
+      });
   }, [remaining, q]);
 
   const boardRows = useMemo(() => {
@@ -761,9 +775,43 @@ export default function LiveDraftPage() {
               ) : (
                 <div className="divide-y max-h-[72vh] overflow-auto">
                   {filteredRemaining.map((p) => (
-                    <div key={p.id} className="grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition">
+                    <div
+
+                      key={p.id}
+
+                      className={cx(
+
+                        "grid grid-cols-12 gap-0 px-3 py-2 text-sm hover:bg-muted/40 transition",
+
+                        p.isGoalie &&
+
+                          "bg-sky-50/80 hover:bg-sky-100/80 dark:bg-sky-950/25 dark:hover:bg-sky-950/40"
+
+                      )}
+
+                    >
                       <div className="col-span-8 min-w-0">
-                        <div className="font-semibold truncate">{p.fullName}</div>
+                        <div className="flex min-w-0 items-center gap-2">
+
+                          <div className="font-semibold truncate">{p.fullName}</div>
+
+                          {p.isGoalie ? (
+
+                            <span
+
+                              className="shrink-0 rounded-full border border-sky-300 bg-sky-100 px-2 py-0.5 text-[10px] font-black tracking-wide text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-200"
+
+                              title="Goalkeeper"
+
+                            >
+
+                              GK
+
+                            </span>
+
+                          ) : null}
+
+                        </div>
                         <div className="mt-1">
                           <Stars value={p.rating} size="sm" />
                         </div>
