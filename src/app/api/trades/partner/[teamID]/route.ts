@@ -1,7 +1,8 @@
-import { NextResponse, NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/authOptions";
+import { getActiveDraftEventId } from "@/lib/activeDraftEvent";
 
 export const runtime = "nodejs";
 
@@ -11,24 +12,24 @@ async function rosterWithRounds(draftEventId: string, teamId: string) {
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     select: { id: true, fullName: true, firstName: true, lastName: true },
   });
-
   if (!players.length) return [];
 
   const picks = await prisma.draftPick.findMany({
-    where: { draftEventId, playerId: { in: players.map((p) => p.id) } },
+    where: { draftEventId, playerId: { in: players.map((player) => player.id) } },
     select: { playerId: true, round: true },
   });
+  const roundByPlayer = new Map(picks.map((pick) => [pick.playerId, pick.round]));
 
-  const roundByPlayer = new Map<string, number>();
-  for (const p of picks) roundByPlayer.set(p.playerId, p.round);
-
-  return players.map((p) => ({
-    ...p,
-    round: roundByPlayer.get(p.id) ?? null,
+  return players.map((player) => ({
+    ...player,
+    round: roundByPlayer.get(player.id) ?? null,
   }));
 }
 
-export async function GET(req: NextRequest, context: any) {
+export async function GET(
+  _req: Request,
+  context: { params: Promise<{ teamID: string }> }
+) {
   try {
     const session = await getServerSession(authOptions);
     const userId = (session?.user as any)?.id as string | undefined;
@@ -39,30 +40,29 @@ export async function GET(req: NextRequest, context: any) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
+    const { teamID } = await context.params;
+    const teamId = String(teamID ?? "").trim();
+    if (!teamId) return NextResponse.json({ error: "Missing team id" }, { status: 400 });
 
-    const params = (await context?.params) ?? context?.params ?? {};
-    const teamId: string | undefined = params.teamID ?? params.teamId ?? params.id;
-
-    if (!teamId) {
-      return NextResponse.json(
-        { error: "Missing team id", debug: { params } },
-        { status: 400 }
-      );
+    const draftEventId = await getActiveDraftEventId();
+    if (!draftEventId) {
+      return NextResponse.json({ error: "No active draft event found" }, { status: 400 });
     }
 
-    const team = await prisma.draftTeam.findUnique({
-      where: { id: teamId },
-      select: { id: true, draftEventId: true },
+    const team = await prisma.draftTeam.findFirst({
+      where: { id: teamId, draftEventId },
+      select: { id: true },
     });
+    if (!team) {
+      return NextResponse.json({ error: "Team not found in the active draft" }, { status: 404 });
+    }
 
-    if (!team) return NextResponse.json({ error: "Team not found" }, { status: 404 });
-
-    const players = await rosterWithRounds(team.draftEventId, team.id);
+    const players = await rosterWithRounds(draftEventId, team.id);
     return NextResponse.json({ players });
-  } catch (err: any) {
-    console.error("Partner roster error:", err);
+  } catch (error: any) {
+    console.error("Partner roster error:", error);
     return NextResponse.json(
-      { error: err?.message ?? "Failed to load partner roster" },
+      { error: error?.message ?? "Failed to load partner roster" },
       { status: 500 }
     );
   }

@@ -120,7 +120,7 @@ export default function TradeHubPage() {
         lastToastRef.current = toastKey;
 
        
-        if (role === "COACH" && (top.status === "PENDING" || top.status === "ACCEPTED" || top.status === "REJECTED" || top.status === "COUNTERED")) {
+        if (myTeamId && (top.status === "PENDING" || top.status === "ACCEPTED" || top.status === "REJECTED" || top.status === "COUNTERED")) {
           
           alert(
             top.status === "PENDING"
@@ -153,7 +153,7 @@ export default function TradeHubPage() {
     }, 5000);
     return () => window.clearInterval(t);
    
-  }, [role]);
+  }, [myTeamId]);
 
   const myRoundById = useMemo(() => {
     const m = new Map<string, number>();
@@ -219,14 +219,14 @@ export default function TradeHubPage() {
   }
 
   const incomingTrades = useMemo(() => {
-    if (role !== "COACH" || !myTeamId) return [];
+    if (!myTeamId) return [];
     return inbox.filter((t) => t.status === "PENDING" && t.toTeamId === myTeamId);
-  }, [inbox, myTeamId, role]);
+  }, [inbox, myTeamId]);
 
   const myOutgoingPending = useMemo(() => {
-    if (role !== "COACH" || !myTeamId) return [];
+    if (!myTeamId) return [];
     return inbox.filter((t) => t.status === "PENDING" && t.fromTeamId === myTeamId);
-  }, [inbox, myTeamId, role]);
+  }, [inbox, myTeamId]);
 
   async function respond(tradeId: string, action: "ACCEPT" | "REJECT", payload?: any) {
     const r = await fetch(`/api/trades/${tradeId}/respond`, {
@@ -240,7 +240,9 @@ export default function TradeHubPage() {
       alert(j?.error ?? "Failed");
       return;
     }
-    await loadInbox(false);
+    await Promise.all([loadContext(), loadInbox(false)]);
+    if (partnerTeamId) await loadPartner(partnerTeamId);
+    alert(action === "ACCEPT" ? "Trade accepted. Both rosters were updated." : "Trade rejected.");
   }
 
   async function counter(tradeId: string, counterPartnerTeamId: string, counterFromRoster: RosterPlayer[], counterToRoster: RosterPlayer[]) {
@@ -279,8 +281,9 @@ export default function TradeHubPage() {
       alert(j?.error ?? "Failed to counter");
       return;
     }
-    await loadInbox(false);
-    
+    await Promise.all([loadContext(), loadInbox(false)]);
+    if (partnerTeamId) await loadPartner(partnerTeamId);
+
     alert("Counter proposed.");
   }
 

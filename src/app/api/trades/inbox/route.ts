@@ -6,41 +6,39 @@ import { authOptions } from "@/lib/authOptions";
 
 export const runtime = "nodejs";
 
-async function latestEventId() {
-  return getActiveDraftEventId();
-}
-
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     const userId = (session?.user as any)?.id as string | undefined;
     const role = (session?.user as any)?.role as string | undefined;
-    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     if (!["COACH", "ADMIN", "BOARD"].includes(role ?? "")) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const draftEventId = await latestEventId();
+    const draftEventId = await getActiveDraftEventId();
     if (!draftEventId) return NextResponse.json({ trades: [], myTeamId: null });
 
-    let myTeamId: string | null = null;
-    if (role === "COACH") {
-      const t = await prisma.draftTeam.findFirst({
-        where: { draftEventId, coachUserId: userId },
-        select: { id: true },
-      });
-      myTeamId = t?.id ?? null;
-      if (!myTeamId) return NextResponse.json({ trades: [], myTeamId: null });
+    const myTeam = await prisma.draftTeam.findFirst({
+      where: { draftEventId, coachUserId: userId },
+      select: { id: true },
+    });
+    const myTeamId = myTeam?.id ?? null;
+
+    if (role === "COACH" && !myTeamId) {
+      return NextResponse.json({ trades: [], myTeamId: null });
     }
 
-    let where: any = { draftEventId };
-    if (role === "COACH" && myTeamId) {
-      where = {
-        draftEventId,
-        OR: [{ fromTeamId: myTeamId }, { toTeamId: myTeamId }],
-      };
-    }
+    // Coaches and Board members who coach see their own team's trade activity.
+    // A non-coaching Admin/Board account may still review all active-event trades.
+    const where =
+      myTeamId && role !== "ADMIN"
+        ? {
+            draftEventId,
+            OR: [{ fromTeamId: myTeamId }, { toTeamId: myTeamId }],
+          }
+        : { draftEventId };
 
     const trades = await prisma.trade.findMany({
       where,
@@ -73,8 +71,8 @@ export async function GET() {
     });
 
     return NextResponse.json({ myTeamId, trades });
-  } catch (err) {
-    console.error("Trade inbox error:", err);
-    return NextResponse.json({ trades: [], myTeamId: null });
+  } catch (error) {
+    console.error("Trade inbox error:", error);
+    return NextResponse.json({ error: "Failed to load trades" }, { status: 500 });
   }
 }
