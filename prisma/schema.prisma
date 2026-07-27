@@ -31,6 +31,17 @@ enum DraftPhase {
   SETUP
   LIVE
   COMPLETE
+  ARCHIVED
+}
+
+enum DraftSeason {
+  SPRING
+  FALL
+}
+
+enum DraftDivision {
+  U11
+  U13
 }
 
 enum AccessRequestType {
@@ -176,10 +187,19 @@ model VerificationToken {
 }
 
 model DraftEvent {
-  id          String     @id @default(cuid())
-  name        String
-  scheduledAt DateTime
-  phase       DraftPhase @default(SETUP)
+  id                 String     @id @default(cuid())
+  name               String
+  slug               String?    @unique
+  scheduledAt        DateTime
+  scheduledDateKnown Boolean    @default(true)
+  phase              DraftPhase @default(SETUP)
+
+  seasonYear Int?
+  season     DraftSeason?
+  division   DraftDivision?
+  archivedAt DateTime?
+  sourceFile String?
+  sourceHash String?
 
   currentPick        Int       @default(1)
   pickClockSeconds   Int       @default(120)
@@ -224,10 +244,31 @@ model DraftTeam {
   @@unique([draftEventId, name])
 }
 
+model PermanentPlayer {
+  id             String    @id @default(cuid())
+  identityKey    String    @unique
+  firstName      String
+  lastName       String
+  fullName       String
+  normalizedName String
+  dob            DateTime?
+
+  draftEntries DraftPlayer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([normalizedName])
+  @@index([dob])
+}
+
 model DraftPlayer {
   id           String     @id @default(cuid())
   draftEventId String
   draftEvent   DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
+
+  permanentPlayerId String?
+  permanentPlayer   PermanentPlayer? @relation(fields: [permanentPlayerId], references: [id], onDelete: SetNull)
 
   registrationId String?   @unique
   firstName      String
@@ -247,6 +288,7 @@ model DraftPlayer {
   primaryEmail  String?
 
   experience       String?
+  rating           Int?
   fall2025Rating   Int?
   spring2025Rating Int?
   spring2026Rating Int?
@@ -270,9 +312,10 @@ model DraftPlayer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([draftEventId, evalNumber])
   @@index([draftEventId, isDraftEligible, isDrafted])
   @@index([draftEventId, lastName, firstName])
-  @@unique([draftEventId, evalNumber])
+  @@index([permanentPlayerId])
 }
 
 model DraftPick {
@@ -318,7 +361,7 @@ model SiblingDraftCost {
 }
 
 model DraftBoard {
-  id          String     @id @default(cuid())
+  id           String     @id @default(cuid())
   draftEventId String
   draftEvent   DraftEvent @relation(fields: [draftEventId], references: [id], onDelete: Cascade)
 
