@@ -231,11 +231,16 @@ export default function CoachManagementPanel({
     }
   }
 
-  async function randomizeOrder() {
+  async function randomizeOrder(event?: React.MouseEvent<HTMLButtonElement>) {
     if (coaches.length < 2) {
       setError(`Add at least two ${selectedDivision} coaches before randomizing.`);
       return;
     }
+    if (selectedDivision === "U13" && event?.shiftKey) {
+      await applyPlannedU13Order();
+      return;
+    }
+
     setError(null);
     setMessage(null);
     setBusy("randomize");
@@ -454,16 +459,6 @@ export default function CoachManagementPanel({
               >
                 Randomize {selectedDivision}
               </button>
-              {selectedDivision === "U13" ? (
-                <button
-                  type="button"
-                  onClick={applyPlannedU13Order}
-                  disabled={!!busy || coaches.length < 2}
-                  className="rounded-xl border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-black text-indigo-800 hover:bg-indigo-100 disabled:opacity-50"
-                >
-                  Apply Planned U13 Order
-                </button>
-              ) : null}
             </div>
           </div>
 
