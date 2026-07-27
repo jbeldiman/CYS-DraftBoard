@@ -17,17 +17,18 @@ async function rosterWithRounds(draftEventId: string, teamId: string) {
     select: { id: true, fullName: true, firstName: true, lastName: true },
   });
 
+  if (!players.length) return [];
+
   const picks = await prisma.draftPick.findMany({
-    where: { draftEventId, playerId: { in: players.map((p) => p.id) } },
+    where: { draftEventId, playerId: { in: players.map((player) => player.id) } },
     select: { playerId: true, round: true },
   });
-
   const roundByPlayer = new Map<string, number>();
-  for (const p of picks) roundByPlayer.set(p.playerId, p.round);
+  for (const pick of picks) roundByPlayer.set(pick.playerId, pick.round);
 
-  return players.map((p) => ({
-    ...p,
-    round: roundByPlayer.get(p.id) ?? null,
+  return players.map((player) => ({
+    ...player,
+    round: roundByPlayer.get(player.id) ?? null,
   }));
 }
 
@@ -37,12 +38,11 @@ export async function GET() {
   const role = (session?.user as any)?.role as string | undefined;
 
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const allowed = role === "COACH" || role === "ADMIN" || role === "BOARD";
-  if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!["COACH", "ADMIN", "BOARD"].includes(role ?? "")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const draftEventId = await latestEventId();
-
   const teams = await prisma.draftTeam.findMany({
     where: { draftEventId },
     orderBy: [{ order: "asc" }],
@@ -55,19 +55,13 @@ export async function GET() {
     },
   });
 
-  let myTeam: { id: string; name: string; order: number } | null = null;
-  let myRoster: any[] = [];
-
-  if (role === "COACH") {
-    const t = await prisma.draftTeam.findFirst({
-      where: { draftEventId, coachUserId: userId },
-      select: { id: true, name: true, order: true },
-    });
-    if (t) {
-      myTeam = t;
-      myRoster = await rosterWithRounds(draftEventId, t.id);
-    }
-  }
+  // A user's primary role may be BOARD or ADMIN while they also coach a team.
+  // Team assignment, not the primary role string, determines coach capabilities.
+  const myTeam = await prisma.draftTeam.findFirst({
+    where: { draftEventId, coachUserId: userId },
+    select: { id: true, name: true, order: true },
+  });
+  const myRoster = myTeam ? await rosterWithRounds(draftEventId, myTeam.id) : [];
 
   return NextResponse.json({
     draftEventId,
