@@ -2,7 +2,13 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
+type Division = "U11" | "U13";
+type DivisionFilter = "ALL" | Division;
+
 type Team = {
+  division: Division;
+  eventId: string;
+  eventName: string;
   id: string;
   name: string;
   order: number;
@@ -94,6 +100,7 @@ function writeColorMap(map: Record<string, string>) {
 
 export default function FullRostersAdminPage() {
   const [teams, setTeams] = useState<Team[]>([]);
+  const [selectedDivision, setSelectedDivision] = useState<DivisionFilter>("ALL");
   const [err, setErr] = useState<string | null>(null);
   const [teamColors, setTeamColors] = useState<Record<string, string>>({});
   const [downloadingPdf, setDownloadingPdf] = useState(false);
@@ -118,6 +125,14 @@ export default function FullRostersAdminPage() {
     return () => clearInterval(t);
   }, []);
 
+  const visibleTeams = useMemo(
+    () =>
+      selectedDivision === "ALL"
+        ? teams
+        : teams.filter((team) => team.division === selectedDivision),
+    [teams, selectedDivision]
+  );
+
   const dateStamp = useMemo(() => {
     const d = new Date();
     const y = d.getFullYear();
@@ -126,12 +141,22 @@ export default function FullRostersAdminPage() {
     return `${y}${m}${day}`;
   }, []);
 
-  const csvFilename = useMemo(() => `full-rosters-${dateStamp}.csv`, [dateStamp]);
-  const pdfFilename = useMemo(() => `full-rosters-${dateStamp}.pdf`, [dateStamp]);
+  const exportDivision =
+    selectedDivision === "ALL" ? "u11-u13" : selectedDivision.toLowerCase();
+
+  const csvFilename = useMemo(
+    () => `full-rosters-${exportDivision}-${dateStamp}.csv`,
+    [dateStamp, exportDivision]
+  );
+  const pdfFilename = useMemo(
+    () => `full-rosters-${exportDivision}-${dateStamp}.pdf`,
+    [dateStamp, exportDivision]
+  );
 
   function handleDownloadCsvAll() {
     const rows: any[][] = [
       [
+        "Division",
         "Team",
         "Team Color",
         "Coach Name",
@@ -148,19 +173,20 @@ export default function FullRostersAdminPage() {
       ],
     ];
 
-    for (const t of teams) {
+    for (const t of visibleTeams) {
       const color = (teamColors[t.id] ?? "").trim();
       const coachName = t.coachUser?.name ?? "";
       const coachEmail = t.coachUser?.email ?? "";
       const label = `Coach ${coachName}${color ? ` · ${color} Team` : ""}`;
 
       if (!t.players || t.players.length === 0) {
-        rows.push([t.name, color, coachName, coachEmail, label, "", "", "", "", "", "", "", ""]);
+        rows.push([t.division, t.name, color, coachName, coachEmail, label, "", "", "", "", "", "", "", ""]);
         continue;
       }
 
       for (const p of t.players) {
         rows.push([
+          t.division,
           t.name,
           color,
           coachName,
@@ -182,7 +208,7 @@ export default function FullRostersAdminPage() {
   }
 
   async function handleDownloadPdfAll() {
-    if (teams.length === 0) return;
+    if (visibleTeams.length === 0) return;
 
     setDownloadingPdf(true);
     try {
@@ -195,19 +221,21 @@ export default function FullRostersAdminPage() {
 
       const doc: any = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
       const marginX = 40;
+      const divisionLabel =
+        selectedDivision === "ALL" ? "U11 & U13" : selectedDivision;
 
       doc.__logoDataUrl = await loadImageAsDataUrl("/branding/cys-logo.png");
       addLogo(doc, { corner: "tr", size: 44, pad: 30 });
 
       doc.setFontSize(16);
-      doc.text("Full Rosters", marginX, 60);
+      doc.text(`${divisionLabel} Rosters`, marginX, 60);
 
       doc.setFontSize(10);
       doc.text(`Generated: ${new Date().toLocaleString()}`, marginX, 78);
 
       let y = 95;
 
-      for (const t of teams) {
+      for (const t of visibleTeams) {
         const color = (teamColors[t.id] ?? "").trim();
         const coachName = t.coachUser?.name ?? "(no name)";
         const coachEmail = t.coachUser?.email ?? "(unassigned)";
@@ -220,7 +248,7 @@ export default function FullRostersAdminPage() {
         }
 
         doc.setFontSize(12);
-        doc.text(`${t.order}. ${t.name}`, marginX, y);
+        doc.text(`${t.division} · ${t.order}. ${t.name}`, marginX, y);
         y += 14;
 
         doc.setFontSize(10);
@@ -292,9 +320,9 @@ export default function FullRostersAdminPage() {
     <div className="py-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Full Rosters</h1>
+          <h1 className="text-3xl font-semibold tracking-tight">All Rosters</h1>
           <div className="text-sm text-muted-foreground">
-            Admin-only: teams + coach + drafted players (for jersey ordering).
+            Admin-only: completed Fall 2026 U11 and U13 teams, coaches, and drafted players.
           </div>
         </div>
 
@@ -302,7 +330,7 @@ export default function FullRostersAdminPage() {
           <button
             type="button"
             onClick={handleDownloadCsvAll}
-            disabled={teams.length === 0}
+            disabled={visibleTeams.length === 0}
             className="inline-flex items-center justify-center rounded-lg border bg-card px-3 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Download CSV
@@ -311,7 +339,7 @@ export default function FullRostersAdminPage() {
           <button
             type="button"
             onClick={handleDownloadPdfAll}
-            disabled={teams.length === 0 || downloadingPdf}
+            disabled={visibleTeams.length === 0 || downloadingPdf}
             className="inline-flex items-center justify-center rounded-lg border bg-card px-3 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {downloadingPdf ? "Building PDF..." : "Download PDF"}
@@ -319,10 +347,27 @@ export default function FullRostersAdminPage() {
         </div>
       </div>
 
+      <div className="mt-4 inline-flex rounded-lg border bg-card p-1">
+        {(["ALL", "U11", "U13"] as DivisionFilter[]).map((division) => (
+          <button
+            key={division}
+            type="button"
+            onClick={() => setSelectedDivision(division)}
+            className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
+              selectedDivision === division
+                ? "bg-foreground text-background shadow-sm"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            }`}
+          >
+            {division === "ALL" ? "Both Divisions" : division}
+          </button>
+        ))}
+      </div>
+
       {err ? <div className="mt-4 text-sm text-red-600">{err}</div> : null}
 
       <div className="mt-6 grid grid-cols-1 gap-4">
-        {teams.map((t) => {
+        {visibleTeams.map((t) => {
           const color = teamColors[t.id] ?? "";
           const label = `Coach ${t.coachUser?.name ?? "(no name)"}${color.trim() ? ` · ${color.trim()} Team` : ""}`;
 
@@ -331,7 +376,7 @@ export default function FullRostersAdminPage() {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-col gap-1">
                   <div className="text-lg font-semibold">
-                    {t.order}. {t.name}
+                    {t.division} · {t.order}. {t.name}
                   </div>
                   <div className="text-sm text-muted-foreground">
                     Coach: {t.coachUser?.name ?? "(no name)"} ·{" "}
@@ -400,9 +445,9 @@ export default function FullRostersAdminPage() {
           );
         })}
 
-        {teams.length === 0 ? (
+        {visibleTeams.length === 0 ? (
           <div className="text-sm text-muted-foreground">
-            No teams configured yet. Add teams in your existing Teams admin endpoint when ready.
+            No completed rosters were found for this division.
           </div>
         ) : null}
       </div>

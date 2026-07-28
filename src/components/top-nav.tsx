@@ -93,7 +93,7 @@ export default function TopNav({ session }: { session: NavSession | null }) {
       ];
 
   const links = isAdmin
-    ? [...baseLinks, { href: "/admin/full-rosters", label: "Full Rosters" }, { href: "/admin", label: "Admin" }]
+    ? [...baseLinks, { href: "/admin/full-rosters", label: "All Rosters" }, { href: "/admin", label: "Admin" }]
     : baseLinks;
 
   return (
